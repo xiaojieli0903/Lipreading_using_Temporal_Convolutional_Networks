@@ -3,6 +3,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from lipreading.losses.combine_margin_loss import CombineMarginLinear
 from lipreading.models.densetcn import DenseTemporalConvNet
@@ -101,9 +102,9 @@ class TCN(nn.Module):
         x = self.tcn_trunk(x.transpose(1, 2))
         x = self.consensus_func(x, lengths, B)
         if isinstance(self.tcn_output, CombineMarginLinear):
-            return self.tcn_output(out, targets)
+            return self.tcn_output(x, targets)
         else:
-            return self.tcn_output(out)
+            return self.tcn_output(x)
 
 
 class DenseTCN(nn.Module):
@@ -142,8 +143,10 @@ class DenseTCN(nn.Module):
         self.consensus_func = _average_batch
 
     def forward(self, x, lengths, B, targets):
+        # B, C, T
         x = self.tcn_trunk(x.transpose(1, 2))
-        x = self.consensus_func(x, lengths, B)
+        # B, C_new, T
+        x = self.consensus_func(x.transpose(1, 2), lengths, B)
         if isinstance(self.tcn_output, CombineMarginLinear):
             return self.tcn_output(x, targets)
         else:
@@ -162,7 +165,12 @@ class Lipreading(nn.Module):
                  width_mult=1.0,
                  use_boundary=False,
                  extract_feats=False,
-                 linear_config=None):
+                 linear_config=None,
+                 predict_future=-1,
+                 frontend_type='3D',
+                 use_memory=False,
+                 membanks_size=1024
+                 ):
         super(Lipreading, self).__init__()
         if linear_config is None:
             linear_config = {'linear_type': 'Linear'}
@@ -171,6 +179,10 @@ class Lipreading(nn.Module):
         self.modality = modality
         self.use_boundary = use_boundary
         self.linear_config = linear_config
+        self.predict_future = predict_future
+        self.use_memory = use_memory
+        self.frontend_type = frontend_type
+        self.membanks_size = membanks_size
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -201,20 +213,52 @@ class Lipreading(nn.Module):
                 frontend_relu = nn.PReLU(self.frontend_nout)
             elif relu_type == 'swish':
                 frontend_relu = Swish()
-
-            self.frontend3D = nn.Sequential(
-                nn.Conv3d(1,
-                          self.frontend_nout,
-                          kernel_size=(5, 7, 7),
-                          stride=(1, 2, 2),
-                          padding=(2, 3, 3),
-                          bias=False), nn.BatchNorm3d(self.frontend_nout),
-                frontend_relu,
-                nn.MaxPool3d(kernel_size=(1, 3, 3),
-                             stride=(1, 2, 2),
-                             padding=(0, 1, 1)))
+            else:
+                raise NotImplementedError(f'{relu_type} is not supported.')
+            if self.frontend_type == '3D':
+                self.frontend3D = nn.Sequential(
+                    nn.Conv3d(1,
+                              self.frontend_nout,
+                              kernel_size=(5, 7, 7),
+                              stride=(1, 2, 2),
+                              padding=(2, 3, 3),
+                              bias=False), nn.BatchNorm3d(self.frontend_nout),
+                    frontend_relu,
+                    nn.MaxPool3d(kernel_size=(1, 3, 3),
+                                 stride=(1, 2, 2),
+                                 padding=(0, 1, 1)))
+            elif self.frontend_type == '2D':
+                self.frontend3D = nn.Sequential(
+                    nn.Conv3d(1,
+                              self.frontend_nout,
+                              kernel_size=(1, 7, 7),
+                              stride=(1, 2, 2),
+                              padding=(0, 3, 3),
+                              bias=False), nn.BatchNorm3d(self.frontend_nout),
+                    frontend_relu,
+                    nn.MaxPool3d(kernel_size=(1, 3, 3),
+                                 stride=(1, 2, 2),
+                                 padding=(0, 1, 1)))
         else:
             raise NotImplementedError
+
+        if self.predict_future > 0:
+            if not self.use_memory:
+                # input_size = B * T * self.backend_out
+                self.network_pred = nn.Sequential(
+                    nn.Linear(self.backend_out, self.backend_out),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(self.backend_out, self.backend_out)
+                )
+            else:
+                self.membanks = nn.Parameter(torch.randn(self.membanks_size, self.backend_out))
+                print('MEM Bank has size %dx%d' % (self.membanks_size, self.backend_out))
+                # input_size = B * T * self.backend_out
+                self.network_pred = nn.Sequential(
+                    nn.Linear(self.backend_out, self.backend_out),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(self.backend_out, self.membanks_size)
+                )
 
         if tcn_options:
             tcn_class = TCN if len(
@@ -257,13 +301,24 @@ class Lipreading(nn.Module):
         if self.modality == 'video':
             B, C, T, H, W = x.size()
             x = self.frontend3D(x)
-            Tnew = x.shape[2]  # outpu should be B x C2 x Tnew x H x W
+            Tnew = x.shape[2]  # outpuT should be B x C2 x Tnew x H x W
             x = threeD_to_2D_tensor(x)
             x = self.trunk(x)
-
             if self.backbone_type == 'shufflenet':
                 x = x.view(-1, self.stage_out_channels)
             x = x.view(B, Tnew, x.size(1))
+            if self.predict_future > 0:
+                # batch * x.size(1)
+                context_lengths = [_ // 2 for _ in lengths]
+                feature_context = _average_batch(x.transpose(1, 2), context_lengths, B)
+                future_target = torch.stack([x[index, int(length * 0.75), :] for index, length in enumerate(lengths)],
+                                            0)
+                if not self.use_memory:
+                    future_predict = self.network_pred(feature_context)
+                else:
+                    predict_logits = self.network_pred(feature_context)
+                    scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
+                    future_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
         elif self.modality == 'audio':
             B, C, T = x.size()
             x = self.trunk(x)
@@ -274,7 +329,15 @@ class Lipreading(nn.Module):
         if self.use_boundary:
             x = torch.cat([x, boundaries], dim=-1)
 
-        return x if self.extract_feats else self.tcn(x, lengths, B, targets)
+        if self.extract_feats:
+            return x
+        else:
+            if self.predict_future <= 0:
+                return self.tcn(x, lengths, B, targets)
+            else:
+                return self.tcn(x, lengths, B, targets), future_predict, future_target
+
+        # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 
     def _initialize_weights_randomly(self):
 
