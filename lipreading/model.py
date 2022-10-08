@@ -21,10 +21,13 @@ def threeD_to_2D_tensor(x):
     return x.reshape(n_batch * s_time, n_channels, sx, sy)
 
 
-def _average_batch(x, lengths, B):
-    return torch.stack(
-        [torch.mean(x[index][:, 0:i], 1) for index, i in enumerate(lengths)],
-        0)
+def _average_batch(x, lengths=None, B=None, average_dim=1):
+    if lengths is None:
+        return torch.mean(x, average_dim)
+    else:
+        return torch.stack(
+            [torch.mean(x[index][:, 0:i], 1) for index, i in enumerate(lengths)],
+            0)
 
 
 class MultiscaleMultibranchTCN(nn.Module):
@@ -169,7 +172,9 @@ class Lipreading(nn.Module):
                  predict_future=-1,
                  frontend_type='3D',
                  use_memory=False,
-                 membanks_size=1024
+                 membanks_size=1024,
+                 predict_residual=False,
+                 predict_type=0
                  ):
         super(Lipreading, self).__init__()
         if linear_config is None:
@@ -180,9 +185,11 @@ class Lipreading(nn.Module):
         self.use_boundary = use_boundary
         self.linear_config = linear_config
         self.predict_future = predict_future
-        self.use_memory = use_memory
         self.frontend_type = frontend_type
+        self.use_memory = use_memory
         self.membanks_size = membanks_size
+        self.predict_residual = predict_residual
+        self.predict_type = predict_type
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -308,17 +315,38 @@ class Lipreading(nn.Module):
                 x = x.view(-1, self.stage_out_channels)
             x = x.view(B, Tnew, x.size(1))
             if self.predict_future > 0:
-                # batch * x.size(1)
-                context_lengths = [_ // 2 for _ in lengths]
-                feature_context = _average_batch(x.transpose(1, 2), context_lengths, B)
-                future_target = torch.stack([x[index, int(length * 0.75), :] for index, length in enumerate(lengths)],
-                                            0)
+                if self.predict_type == 1:
+                    block_size = 4
+                    time_chunks = torch.split(x, block_size, dim=1)
+                    stride = 1
+                    context_block_number = 2
+                    predict_times = len(time_chunks) - context_block_number
+                    feature_context = future_target = None
+                    for i in range(0, predict_times, stride):
+                        # print(i, predict_times, len(time_chunks))
+                        if feature_context is None:
+                            feature_context = _average_batch(torch.cat(time_chunks[i:i+2], 1), average_dim=1)
+                            future_target = _average_batch(time_chunks[i+2])
+                        else:
+                            feature_context = torch.cat((
+                                _average_batch(torch.cat(time_chunks[i:i+2], 1), average_dim=1)
+                                , feature_context), dim=0)
+                            future_target = torch.cat((_average_batch(time_chunks[i+2], average_dim=1),
+                                                       future_target), dim=0)
+                else:
+                    # batch * x.size(1)
+                    context_lengths = [_ // 2 for _ in lengths]
+                    feature_context = _average_batch(x.transpose(1, 2), context_lengths, B)
+                    future_target = torch.stack([x[index, int(length * 0.75), :] for index, length in enumerate(lengths)], 0)
+
                 if not self.use_memory:
                     future_predict = self.network_pred(feature_context)
                 else:
                     predict_logits = self.network_pred(feature_context)
                     scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
                     future_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
+                if self.predict_residual:
+                    future_target = future_target - future_predict
         elif self.modality == 'audio':
             B, C, T = x.size()
             x = self.trunk(x)

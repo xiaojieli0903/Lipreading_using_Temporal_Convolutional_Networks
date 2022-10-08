@@ -378,6 +378,8 @@ def get_model_from_json():
     args.frontend_type = args_loaded.get("frontend_type", '3D')
     args.use_memory = args_loaded.get("use_memory", False)
     args.membanks_size = args_loaded.get("membanks_size", 1024)
+    args.predict_residual = args_loaded.get("predict_residual", False)
+    args.predict_type = args_loaded.get("predict_type", 0)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -415,7 +417,9 @@ def get_model_from_json():
                        predict_future=args.predict_future,
                        frontend_type=args.frontend_type,
                        use_memory=args.use_memory,
-                       membanks_size=args.membanks_size
+                       membanks_size=args.membanks_size,
+                       predict_residual=args.predict_residual,
+                       predict_type=args.predict_type
                        ).cuda()
     calculateNorm2(model)
     return model
