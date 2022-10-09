@@ -209,7 +209,17 @@ def load_args(default_config=None):
                         type=str,
                         default='',
                         help='the name of the exp.')
+    # predict loss weight
+    parser.add_argument('--predict-loss-weight',
+                        type=float,
+                        default=1.0,
+                        help='the weight of the prediction loss.')
 
+    # cls loss weight
+    parser.add_argument('--cls-loss-weight',
+                        type=float,
+                        default=1.0,
+                        help='the weight of the cls loss.')
     args = parser.parse_args()
     return args
 
@@ -265,9 +275,10 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.predict_future >= 0:
-                logits, future_predict, future_target = model(input.unsqueeze(1).cuda(),
-                                                              lengths=lengths,
-                                                              boundaries=boundaries)
+                logits, future_predict, future_target = model(
+                    input.unsqueeze(1).cuda(),
+                    lengths=lengths,
+                    boundaries=boundaries)
             else:
                 logits = model(input.unsqueeze(1).cuda(),
                                lengths=lengths,
@@ -302,6 +313,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
     running_corrects = 0.
     running_all = 0.
     loss_dict = {}
+    loss_weight = {}
 
     end = time.time()
     for batch_idx, data in enumerate(dset_loader):
@@ -323,13 +335,15 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
         if model.predict_future >= 0:
-            logits, future_predict, future_target = model(input.unsqueeze(1).cuda(),
-                                                          lengths=lengths,
-                                                          boundaries=boundaries,
-                                                          targets=labels_a)
+            logits, future_predict, future_target = model(
+                input.unsqueeze(1).cuda(),
+                lengths=lengths,
+                boundaries=boundaries,
+                targets=labels_a)
             loss_predict = l2_loss(future_predict, future_target)
             loss_dict['loss_L2'] = loss_predict
-            loss += loss_predict
+            loss_weight['loss_L2'] = args.predict_loss_weight
+            loss += args.predict_loss_weight * loss_predict
         else:
             logits = model(input.unsqueeze(1).cuda(),
                            lengths=lengths,
@@ -339,7 +353,8 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         loss_func = mixup_criterion(labels_a, labels_b, lam)
         loss_KL = loss_func(criterion, logits)
         loss_dict['loss_KL'] = loss_KL
-        loss += loss_KL
+        loss_weight['loss_KL'] = args.cls_loss_weight
+        loss += args.cls_loss_weight * loss_KL
 
         loss.backward()
         optimizer.step()
@@ -359,7 +374,8 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                                               == len(dset_loader) - 1):
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
-                running_corrects, running_all, batch_time, data_time, lr,
+                loss_weight, running_corrects, running_all, batch_time,
+                data_time, lr,
                 torch.cuda.max_memory_allocated() / 1024 / 1024)
 
     return model
@@ -373,7 +389,8 @@ def get_model_from_json():
     args.width_mult = args_loaded['width_mult']
     args.relu_type = args_loaded['relu_type']
     args.use_boundary = args_loaded.get("use_boundary", False)
-    args.linear_config = args_loaded.get("linear_config", {'linear_type': 'Linear'})
+    args.linear_config = args_loaded.get("linear_config",
+                                         {'linear_type': 'Linear'})
     args.predict_future = args_loaded.get("predict_future", -1)
     args.frontend_type = args_loaded.get("frontend_type", '3D')
     args.use_memory = args_loaded.get("use_memory", False)
@@ -419,8 +436,7 @@ def get_model_from_json():
                        use_memory=args.use_memory,
                        membanks_size=args.membanks_size,
                        predict_residual=args.predict_residual,
-                       predict_type=args.predict_type
-                       ).cuda()
+                       predict_type=args.predict_type).cuda()
     calculateNorm2(model)
     return model
 

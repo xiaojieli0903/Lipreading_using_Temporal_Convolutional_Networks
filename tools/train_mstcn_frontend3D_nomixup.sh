@@ -5,6 +5,5 @@ CUDA_VISIBLE_DEVICES=2 python main.py --modality video \
                                       --config-path $MODEL_JSON_PATH \
                                       --annonation-direc $ANNONATION_DIRECTORY \
                                       --data-dir $MOUTH_ROIS_DIRECTORY \
-				      --batch-size 8
-#				      --model-path train_logs/tcn/lrw_resnet18_mstcn/2022-09-24T11:43:09/ckpt.pth \
-#				      --init-epoch 1
+				      --alpha 0 \
+				      --exp-name _nomixup
