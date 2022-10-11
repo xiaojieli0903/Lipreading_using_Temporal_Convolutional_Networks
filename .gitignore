@@ -8,4 +8,6 @@ __pycache__/
 *.pth
 datasets/outputs
 .DS_Store
-*/.*
+*/.ipynb*
+*/*/.ipynb*
+.ipynb*/*
