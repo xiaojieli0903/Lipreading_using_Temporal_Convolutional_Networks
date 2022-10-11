@@ -6,11 +6,12 @@ import sys
 import librosa
 import numpy as np
 import torch
+from torch.utils.data import Dataset
 
 from lipreading.utils import read_txt_lines
 
 
-class MyDataset(object):
+class MyDataset(Dataset):
     def __init__(self,
                  modality,
                  data_partition,
@@ -20,6 +21,7 @@ class MyDataset(object):
                  preprocessing_func=None,
                  data_suffix='.npz',
                  use_boundary=False):
+        super(MyDataset, self).__init__()
         assert os.path.isfile( label_fp ), \
             f"File path provided for the labels does not exist. Path iput: {label_fp}."
         self._data_partition = data_partition
@@ -162,7 +164,6 @@ class MyDataset(object):
         return boundary
 
     def __getitem__(self, idx):
-
         raw_data = self.load_data(self.list[idx][0])
         # -- perform variable length on training set
         if (self._data_partition
@@ -189,8 +190,8 @@ def pad_packed_collate(batch):
             a, b) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
     elif len(batch[0]) == 3:
         use_boundary = True
-        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(
-            *[(a, a.shape[0], b, c) for (a, b, c) in sorted(
+        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(*[(
+            a, a.shape[0], b, c) for (a, b, c) in sorted(
                 batch, key=lambda x: x[0].shape[0], reverse=True)])
 
     if data_tuple[0].ndim == 1:

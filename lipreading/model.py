@@ -25,9 +25,9 @@ def _average_batch(x, lengths=None, B=None, average_dim=1):
     if lengths is None:
         return torch.mean(x, average_dim)
     else:
-        return torch.stack(
-            [torch.mean(x[index][:, 0:i], 1) for index, i in enumerate(lengths)],
-            0)
+        return torch.stack([
+            torch.mean(x[index][:, 0:i], 1) for index, i in enumerate(lengths)
+        ], 0)
 
 
 class MultiscaleMultibranchTCN(nn.Module):
@@ -51,9 +51,11 @@ class MultiscaleMultibranchTCN(nn.Module):
                                                     dropout=dropout,
                                                     relu_type=relu_type,
                                                     dwpw=dwpw)
-        if linear_config.get('linear_type', 'Linear') in ['CombineMarginLinear']:
+        if linear_config.get('linear_type',
+                             'Linear') in ['CombineMarginLinear']:
             linear_config.pop('linear_type')
-            self.tcn_output = CombineMarginLinear(num_channels[-1], num_classes, **linear_config)
+            self.tcn_output = CombineMarginLinear(num_channels[-1],
+                                                  num_classes, **linear_config)
         else:
             self.tcn_output = nn.Linear(num_channels[-1], num_classes)
 
@@ -90,9 +92,11 @@ class TCN(nn.Module):
                                          tcn_options=tcn_options,
                                          relu_type=relu_type,
                                          dwpw=dwpw)
-        if linear_config.get('linear_type', 'Linear') in ['CombineMarginLinear']:
+        if linear_config.get('linear_type',
+                             'Linear') in ['CombineMarginLinear']:
             linear_config.pop('linear_type')
-            self.tcn_output = CombineMarginLinear(num_channels[-1], num_classes, **linear_config)
+            self.tcn_output = CombineMarginLinear(num_channels[-1],
+                                                  num_classes, **linear_config)
         else:
             self.tcn_output = nn.Linear(num_channels[-1], num_classes)
 
@@ -137,9 +141,11 @@ class DenseTCN(nn.Module):
             relu_type=relu_type,
             squeeze_excitation=squeeze_excitation,
         )
-        if linear_config.get('linear_type', 'Linear') in ['CombineMarginLinear']:
+        if linear_config.get('linear_type',
+                             'Linear') in ['CombineMarginLinear']:
             linear_config.pop('linear_type')
-            self.tcn_output = CombineMarginLinear(num_features, num_classes, **linear_config)
+            self.tcn_output = CombineMarginLinear(num_features, num_classes,
+                                                  **linear_config)
         else:
             self.tcn_output = nn.Linear(num_features, num_classes)
 
@@ -174,8 +180,7 @@ class Lipreading(nn.Module):
                  use_memory=False,
                  membanks_size=1024,
                  predict_residual=False,
-                 predict_type=0
-                 ):
+                 predict_type=0):
         super(Lipreading, self).__init__()
         if linear_config is None:
             linear_config = {'linear_type': 'Linear'}
@@ -255,17 +260,17 @@ class Lipreading(nn.Module):
                 self.network_pred = nn.Sequential(
                     nn.Linear(self.backend_out, self.backend_out),
                     nn.ReLU(inplace=True),
-                    nn.Linear(self.backend_out, self.backend_out)
-                )
+                    nn.Linear(self.backend_out, self.backend_out))
             else:
-                self.membanks = nn.Parameter(torch.randn(self.membanks_size, self.backend_out))
-                print('MEM Bank has size %dx%d' % (self.membanks_size, self.backend_out))
+                self.membanks = nn.Parameter(
+                    torch.randn(self.membanks_size, self.backend_out))
+                print('MEM Bank has size %dx%d' %
+                      (self.membanks_size, self.backend_out))
                 # input_size = B * T * self.backend_out
                 self.network_pred = nn.Sequential(
                     nn.Linear(self.backend_out, self.backend_out),
                     nn.ReLU(inplace=True),
-                    nn.Linear(self.backend_out, self.membanks_size)
-                )
+                    nn.Linear(self.backend_out, self.membanks_size))
 
         if tcn_options:
             tcn_class = TCN if len(
@@ -281,8 +286,7 @@ class Lipreading(nn.Module):
                 dropout=tcn_options['dropout'],
                 relu_type=relu_type,
                 dwpw=tcn_options['dwpw'],
-                linear_config=linear_config
-            )
+                linear_config=linear_config)
         elif densetcn_options:
             self.tcn = DenseTCN(
                 block_config=densetcn_options['block_config'],
@@ -296,8 +300,7 @@ class Lipreading(nn.Module):
                 dropout=densetcn_options['dropout'],
                 relu_type=relu_type,
                 squeeze_excitation=densetcn_options['squeeze_excitation'],
-                linear_config=linear_config
-            )
+                linear_config=linear_config)
         else:
             raise NotImplementedError
 
@@ -325,26 +328,36 @@ class Lipreading(nn.Module):
                     for i in range(0, predict_times, stride):
                         # print(i, predict_times, len(time_chunks))
                         if feature_context is None:
-                            feature_context = _average_batch(torch.cat(time_chunks[i:i+2], 1), average_dim=1)
-                            future_target = _average_batch(time_chunks[i+2])
+                            feature_context = _average_batch(torch.cat(
+                                time_chunks[i:i + 2], 1),
+                                                             average_dim=1)
+                            future_target = _average_batch(time_chunks[i + 2])
                         else:
-                            feature_context = torch.cat((
-                                _average_batch(torch.cat(time_chunks[i:i+2], 1), average_dim=1)
-                                , feature_context), dim=0)
-                            future_target = torch.cat((_average_batch(time_chunks[i+2], average_dim=1),
-                                                       future_target), dim=0)
+                            feature_context = torch.cat((_average_batch(
+                                torch.cat(time_chunks[i:i + 2], 1),
+                                average_dim=1), feature_context),
+                                                        dim=0)
+                            future_target = torch.cat(
+                                (_average_batch(time_chunks[i + 2],
+                                                average_dim=1), future_target),
+                                dim=0)
                 else:
                     # batch * x.size(1)
                     context_lengths = [_ // 2 for _ in lengths]
-                    feature_context = _average_batch(x.transpose(1, 2), context_lengths, B)
-                    future_target = torch.stack([x[index, int(length * 0.75), :] for index, length in enumerate(lengths)], 0)
+                    feature_context = _average_batch(x.transpose(1, 2),
+                                                     context_lengths, B)
+                    future_target = torch.stack([
+                        x[index, int(length * 0.75), :]
+                        for index, length in enumerate(lengths)
+                    ], 0)
 
                 if not self.use_memory:
                     future_predict = self.network_pred(feature_context)
                 else:
                     predict_logits = self.network_pred(feature_context)
                     scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                    future_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
+                    future_predict = torch.einsum('bm,mc->bc', scores,
+                                                  self.membanks)
                 if self.predict_residual:
                     future_target = future_target - future_predict
         elif self.modality == 'audio':
@@ -363,7 +376,8 @@ class Lipreading(nn.Module):
             if self.predict_future <= 0:
                 return self.tcn(x, lengths, B, targets)
             else:
-                return self.tcn(x, lengths, B, targets), future_predict, future_target
+                return self.tcn(x, lengths, B,
+                                targets), future_predict, future_target
 
         # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 
