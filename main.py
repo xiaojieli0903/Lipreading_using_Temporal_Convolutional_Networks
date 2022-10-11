@@ -325,7 +325,8 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         else:
             input, lengths, labels = data
             boundaries = None
-
+        if input is None:
+            break
         lr = showLR(optimizer)
         # measure data loading time
         data_time.update(time.time() - end)

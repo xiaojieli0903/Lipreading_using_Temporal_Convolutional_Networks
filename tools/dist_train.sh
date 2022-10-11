@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 MODEL_JSON_PATH=configs/lrw_resnet18_mstcn.json
-ANNONATION_DIRECTORY=/userhome/datasets/lipread_mp4/
-MOUTH_ROIS_DIRECTORY=/userhome/datasets/LRW/visual_data
+ANNONATION_DIRECTORY=/disk/gao2/datasets/lrw/lipread_mp4/
+MOUTH_ROIS_DIRECTORY=/disk/gao2/datasets/lrw/visual_data
 
 GPUS=$1
 NNODES=${NNODES:-1}

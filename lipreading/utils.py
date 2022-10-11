@@ -287,7 +287,10 @@ class DataPrefetcher(object):
         try:
             self.next_items = next(self.loader)
         except StopIteration:
-            self.next_items = {key: None for key in self.next_items.keys()}
+            if isinstance(self.next_items, dict):
+                self.next_items = {key: None for key in self.next_items.keys()}
+            elif isinstance(self.next_items, list):
+                self.next_items = [None for item in self.next_items]
             return self.next_items
         except:
             raise RuntimeError('load data error')
