@@ -300,6 +300,7 @@ def evaluate(model, dset_loader, criterion):
 
 
 def train(model, dset_loader, criterion, epoch, optimizer, logger):
+    dataset_num = len(dset_loader.dataset)
     dset_loader = iter(DataPrefetcher(dset_loader))
     data_time = AverageMeter()
     batch_time = AverageMeter()
@@ -374,7 +375,8 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 running_corrects, running_all, batch_time, data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter)
+                torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter, 
+                dataset_num)
     return model
 
 

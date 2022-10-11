@@ -209,14 +209,14 @@ def get_logger(args, save_path):
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         loss_dict, running_corrects, running_all, batch_time,
-                        data_time, lr, mem, global_iter):
+                        data_time, lr, mem, global_iter, dataset_num):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     all_iters = args.epochs * len(dset_loader)
     eta =  batch_time.avg * (all_iters - global_iter) / 3600
     
     logger.info(
-        f"[{global_iter}/{all_iters} | {batch_idx:5.0f}/{len(dset_loader):5.0f} | "
-        f"{running_all * args.world_size:5.0f}/{len(dset_loader.loader.dataset):5.0f} ({perc_epoch:.0f}%)] | "
+        f"[{global_iter}/{all_iters} | {batch_idx:5.0f}/{dataset_num:5.0f} | "
+        f"{running_all * args.world_size:5.0f}/{len(dset_loader.loader):5.0f} ({perc_epoch:.0f}%)] | "
         f"Loss: {running_loss / running_all:.4f} | Acc:{running_corrects / running_all:.4f} | "
         f"Cost time:{batch_time.val:1.3f} ({batch_time.avg:1.3f})s | "
         f"lr:{lr:.6f} | "
