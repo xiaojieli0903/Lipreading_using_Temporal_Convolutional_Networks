@@ -215,8 +215,8 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
     eta =  batch_time.avg * (all_iters - global_iter) / 3600
     
     logger.info(
-        f"[{global_iter}/{all_iters} | {batch_idx:5.0f}/{dataset_num:5.0f} | "
-        f"{running_all * args.world_size:5.0f}/{len(dset_loader.loader):5.0f} ({perc_epoch:.0f}%)] | "
+        f"[{global_iter}/{all_iters} | {running_all * args.world_size:5.0f}/{dataset_num:5.0f} | "
+        f"{batch_idx:5.0f}/{len(dset_loader.loader):5.0f} ({perc_epoch:.0f}%)] | "
         f"Loss: {running_loss / running_all:.4f} | Acc:{running_corrects / running_all:.4f} | "
         f"Cost time:{batch_time.val:1.3f} ({batch_time.avg:1.3f})s | "
         f"lr:{lr:.6f} | "
