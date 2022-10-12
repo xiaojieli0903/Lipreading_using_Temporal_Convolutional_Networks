@@ -190,8 +190,8 @@ def pad_packed_collate(batch):
             a, b) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
     elif len(batch[0]) == 3:
         use_boundary = True
-        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(*[(
-            a, a.shape[0], b, c) for (a, b, c) in sorted(
+        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(
+            *[(a, a.shape[0], b, c) for (a, b, c) in sorted(
                 batch, key=lambda x: x[0].shape[0], reverse=True)])
 
     if data_tuple[0].ndim == 1:

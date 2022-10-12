@@ -7,7 +7,6 @@ import shutil
 import numpy as np
 import torch
 import torch.distributed as dist
-
 from mmcv.runner import get_dist_info
 from mmcv.utils import Registry, build_from_cfg
 
@@ -212,8 +211,8 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         data_time, lr, mem, global_iter, dataset_num):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     all_iters = args.epochs * len(dset_loader)
-    eta =  batch_time.avg * (all_iters - global_iter) / 3600
-    
+    eta = batch_time.avg * (all_iters - global_iter) / 3600
+
     logger.info(
         f"[{global_iter}/{all_iters} | {running_all * args.world_size:5.0f}/{dataset_num:5.0f} | "
         f"{batch_idx:5.0f}/{len(dset_loader.loader):5.0f} ({perc_epoch:.0f}%)] | "
@@ -222,7 +221,8 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
         f"lr:{lr:.6f} | "
         f"Mem:{mem:.3f}M | "
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
-        f"Instances per second: {args.batch_size*args.world_size/batch_time.avg:.2f} | ETA: {eta:.2f}h")
+        f"Instances per second: {args.batch_size*args.world_size/batch_time.avg:.2f} | ETA: {eta:.2f}h"
+    )
     for key in loss_dict:
         logger.info(f"-----{key}: {loss_dict[key].item():.4f}")
 
@@ -318,7 +318,7 @@ class DataPrefetcher(object):
 
     def __iter__(self):
         return self
-    
+
     def __len__(self):
         return len(self.loader)
 

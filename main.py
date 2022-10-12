@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from mmcv.runner import get_dist_info, init_dist
 from torch.nn.parallel.distributed import DistributedDataParallel
 from tqdm import tqdm
 
@@ -23,11 +24,11 @@ from lipreading.dataloaders import (get_data_loaders,
 from lipreading.mixup import mixup_criterion, mixup_data
 from lipreading.model import Lipreading
 from lipreading.optim_utils import CosineScheduler, get_optimizer
-from lipreading.utils import (AverageMeter, CheckpointSaver, calculateNorm2,
-                              get_logger, get_save_folder, load_json,
-                              load_model, save2npz, showLR,
-                              update_logger_batch, DataPrefetcher)
-from mmcv.runner import get_dist_info, init_dist
+from lipreading.utils import (AverageMeter, CheckpointSaver, DataPrefetcher,
+                              calculateNorm2, get_logger, get_save_folder,
+                              load_json, load_model, save2npz, showLR,
+                              update_logger_batch)
+
 global logger
 
 mp.set_start_method('fork', force=True)
@@ -376,7 +377,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 running_corrects, running_all, batch_time, data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter, 
+                torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter,
                 dataset_num)
     return model
 
@@ -436,8 +437,7 @@ def get_model_from_json():
                        use_memory=args.use_memory,
                        membanks_size=args.membanks_size,
                        predict_residual=args.predict_residual,
-                       predict_type=args.predict_type
-                      ).cuda()
+                       predict_type=args.predict_type).cuda()
     calculateNorm2(model)
     return model
 
@@ -490,12 +490,11 @@ def main():
     scheduler = CosineScheduler(args.lr, args.epochs)
 
     # distributed model
-    model = DistributedDataParallel(
-        model,
-        device_ids=[torch.cuda.current_device()],
-        output_device=torch.cuda.current_device(),
-        broadcast_buffers=False,
-        find_unused_parameters=True)
+    model = DistributedDataParallel(model,
+                                    device_ids=[torch.cuda.current_device()],
+                                    output_device=torch.cuda.current_device(),
+                                    broadcast_buffers=False,
+                                    find_unused_parameters=True)
 
     if args.model_path:
         assert args.model_path.endswith('.pth') and os.path.isfile(args.model_path), \
@@ -539,8 +538,10 @@ def main():
         logger.info(model)
 
     while epoch < args.epochs:
-        model = train(model, dset_loaders['train'], criterion, epoch, optimizer, logger if args.rank==0 else None)
-        acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'], criterion)
+        model = train(model, dset_loaders['train'], criterion, epoch,
+                      optimizer, logger if args.rank == 0 else None)
+        acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
+                                             criterion)
         print(
             f"rank-{args.rank}-{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
         )

@@ -55,7 +55,7 @@ for filename_idx, line in enumerate(lines):
     video_filename = os.path.join(args.video_direc, filename + '.mp4')
     landmarks_filename = os.path.join(args.landmark_direc, filename + '.pkl')
     dst_filename = os.path.join(args.save_direc, filename + '.npz')
-    if os.path.getsize(dst_filename) ==0:
+    if os.path.getsize(dst_filename) == 0:
         print(dst_filename)
     #assert os.path.isfile(
     #    video_filename), f"File does not exist. Path input: {video_filename}"
@@ -79,9 +79,10 @@ for filename_idx, line in enumerate(lines):
     )
 
     try:
-        if not os.path.exists(dst_filename) or os.path.getsize(dst_filename) == 0:
+        if not os.path.exists(dst_filename) or os.path.getsize(
+                dst_filename) == 0:
             save2npz(dst_filename, data=sequence)
-    except: # AssertionError:
+    except:  # AssertionError:
         error_list.write(f'{video_filename}\n')
         print(f'!!!error {video_filename}, skip')
         #continue
