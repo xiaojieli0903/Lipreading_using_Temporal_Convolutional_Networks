@@ -220,6 +220,16 @@ def load_args(default_config=None):
                         type=float,
                         default=1.0,
                         help='the weight of the cls loss.')
+    # loss average dim
+    parser.add_argument('--loss-average-dim',
+                        type=int,
+                        default=-1,
+                        help='the average dim of the L2 loss.')
+    # detach target
+    parser.add_argument('--detach-target',
+                        default=False,
+                        action='store_true',
+                        help='detach the target when calculate loss.')
     args = parser.parse_args()
     return args
 
@@ -232,30 +242,41 @@ random.seed(1)
 torch.backends.cudnn.benchmark = True
 
 
-def extract_feats(model):
+def extract_feats(model, path_list):
     """
     :rtype: FloatTensor
     """
     model.eval()
-    preprocessing_func = get_preprocessing_pipelines()['test']
-    data = preprocessing_func(np.load(
-        args.mouth_patch_path)['data'])  # data: TxHxW
-    return model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
-                 lengths=[data.shape[0]])
+    lines = open(path_list, 'r').readlines()
+    idx = 0
+    for line in lines:
+        if idx % 1000 == 0:
+            print(f"processing idx {idx}")
+        single_path = line.strip()
+        preprocessing_func = get_preprocessing_pipelines(args.modality)['test']
+        data = preprocessing_func(np.load(single_path)['data'])  # data: TxHxW
+        idx += 1
+        data_name = single_path.split('/')[-1]
+        out_path = os.path.join(args.mouth_embedding_out_path, data_name)
+        save2npz(out_path,
+                 model(torch.FloatTensor(data)[None, None, :, :, :].cuda(), lengths=[data.shape[0]]).cpu().detach().numpy())
 
 
-def l2_loss(pred, target):
+def l2_loss(pred, target, average_dim=-1):
     """L2 loss.
 
     Args:
         pred (torch.Tensor): The prediction.
         target (torch.Tensor): The learning target of the prediction.
-
+        average_dim (int): The average dim of loss.
     Returns:
         torch.Tensor: Calculated loss
     """
     assert pred.size() == target.size() and target.numel() > 0
-    loss = torch.sum(torch.pow(pred - target, 2)) / target.numel()
+    if average_dim == -1:
+        loss = torch.sum(torch.pow(pred - target, 2)) / target.numel()
+    else:
+        loss = torch.sum(torch.pow(pred - target, 2)) / pred.shape[average_dim]
     return loss
 
 
@@ -275,7 +296,7 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.predict_future >= 0:
-                logits, future_predict, future_target = model(
+                logits, feature_predict, feature_target = model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -335,12 +356,15 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
         if model.predict_future >= 0:
-            logits, future_predict, future_target = model(
+            logits, feature_predict, feature_target = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
                 targets=labels_a)
-            loss_predict = l2_loss(future_predict, future_target)
+            if args.detach_target:
+                loss_predict = l2_loss(feature_predict, feature_target.detach(), args.loss_average_dim)
+            else:
+                loss_predict = l2_loss(feature_predict, feature_target, args.loss_average_dim)
             loss_dict['loss_L2'] = loss_predict
             loss_weight['loss_L2'] = args.predict_loss_weight
             loss += args.predict_loss_weight * loss_predict
@@ -397,6 +421,10 @@ def get_model_from_json():
     args.membanks_size = args_loaded.get("membanks_size", 1024)
     args.predict_residual = args_loaded.get("predict_residual", False)
     args.predict_type = args_loaded.get("predict_type", 0)
+    args.block_size = args_loaded.get("block_size", 4)
+    args.memory_options = args_loaded.get("memory_options", {'radius': 16,
+                                                             'slot': 112,
+                                                             'head': 8})
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -436,7 +464,10 @@ def get_model_from_json():
                        use_memory=args.use_memory,
                        membanks_size=args.membanks_size,
                        predict_residual=args.predict_residual,
-                       predict_type=args.predict_type).cuda()
+                       predict_type=args.predict_type,
+                       block_size=args.block_size,
+                       memory_options=args.memory_options
+                       ).cuda()
     calculateNorm2(model)
     return model
 
@@ -481,8 +512,7 @@ def main():
                 f'Model has been successfully loaded from {args.model_path}')
         # feature extraction
         if args.mouth_patch_path:
-            save2npz(args.mouth_embedding_out_path,
-                     data=extract_feats(model).cpu().detach().numpy())
+            extract_feats(model, args.mouth_patch_path)
             return
         # if test-time, performance on test partition and exit. Otherwise, performance on validation and continue (sanity check for reload)
         if args.test:
