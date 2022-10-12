@@ -369,13 +369,13 @@ class Lipreading(nn.Module):
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                        feature_predict = torch.einsum('bm,mc->bc', scores,
-                                                      self.membanks)
+                        feature_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
                     else:
                         # input query, recon_target
-                        self.memory(feature_context.view(B, 1, feature_context.shape[1]), 
-                                    feature_target.view(B, 1, feature_target.shape[1]),
-                                    inference=False)
+                        feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
+                            feature_context.view(B, 1, feature_context.shape[1]),
+                            feature_target.view(B, 1, feature_target.shape[1]),
+                            inference=False)
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
         

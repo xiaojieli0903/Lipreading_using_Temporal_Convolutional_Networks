@@ -162,7 +162,8 @@ def load_args(default_config=None):
         default=False,
         action='store_true',
         help=
-        'If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes'
+        'If True, allows to init from model with mismatching weight tensors. Useful to init from model with different '
+        'number of classes'
     )
     # -- feature extractor
     parser.add_argument('--extract-feats',
@@ -230,6 +231,11 @@ def load_args(default_config=None):
                         default=False,
                         action='store_true',
                         help='detach the target when calculate loss.')
+    # prediction loss type
+    parser.add_argument('--predict-loss-type',
+                        type=str,
+                        default='l2',
+                        help='the type of the prediction loss.')
     args = parser.parse_args()
     return args
 
@@ -262,21 +268,31 @@ def extract_feats(model, path_list):
                  model(torch.FloatTensor(data)[None, None, :, :, :].cuda(), lengths=[data.shape[0]]).cpu().detach().numpy())
 
 
-def l2_loss(pred, target, average_dim=-1):
-    """L2 loss.
+def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
+    """calculate loss.
 
     Args:
         pred (torch.Tensor): The prediction.
         target (torch.Tensor): The learning target of the prediction.
+        loss_type (str): The type of the  loss
         average_dim (int): The average dim of loss.
     Returns:
         torch.Tensor: Calculated loss
     """
     assert pred.size() == target.size() and target.numel() > 0
-    if average_dim == -1:
-        loss = torch.sum(torch.pow(pred - target, 2)) / target.numel()
+    if loss_type == 'l2':
+        if average_dim == -1:
+            loss = torch.sum(torch.pow(pred - target, 2))
+        else:
+            loss = torch.sum(torch.pow(pred - target, 2)) / target.shape[average_dim]
+    elif loss_type == 'cosine':
+        loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
     else:
-        loss = torch.sum(torch.pow(pred - target, 2)) / pred.shape[average_dim]
+        raise RuntimeError(f'Loss type {loss_type} is not supported.')
+    if average_dim == -1:
+        loss /= target.numel()
+    else:
+        loss /= target.shape[average_dim]
     return loss
 
 
@@ -362,11 +378,18 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                 boundaries=boundaries,
                 targets=labels_a)
             if args.detach_target:
-                loss_predict = l2_loss(feature_predict, feature_target.detach(), args.loss_average_dim)
+                loss_predict = calculate_loss(feature_predict,
+                                              feature_target.detach(),
+                                              args.prediction_loss_type,
+                                              args.loss_average_dim)
             else:
-                loss_predict = l2_loss(feature_predict, feature_target, args.loss_average_dim)
-            loss_dict['loss_L2'] = loss_predict
-            loss_weight['loss_L2'] = args.predict_loss_weight
+                loss_predict = calculate_loss(feature_predict,
+                                              feature_target,
+                                              args.prediction_loss_type,
+                                              args.loss_average_dim)
+            prediction_loss_name = 'loss_' + args.prediction_loss_type
+            loss_dict[prediction_loss_name] = loss_predict
+            loss_weight[prediction_loss_name] = args.predict_loss_weight
             loss += args.predict_loss_weight * loss_predict
         else:
             logits = model(input.unsqueeze(1).cuda(),
