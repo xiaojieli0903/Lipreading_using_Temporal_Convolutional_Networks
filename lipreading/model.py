@@ -283,7 +283,7 @@ class Lipreading(nn.Module):
                                          n_slot=memory_options['slot'],
                                          n_head=memory_options['head'])
                 else:
-                    raise RuntimeError(f'{self.memory_type} is not supported.') 
+                    raise RuntimeError(f'{self.memory_type} is not supported.')
 
         if tcn_options:
             tcn_class = TCN if len(
@@ -349,10 +349,10 @@ class Lipreading(nn.Module):
                                 torch.cat(time_chunks[i:i + 2], 1),
                                 average_dim=1), feature_context),
                                                         dim=0)
-                            feature_target = torch.cat(
-                                (_average_batch(time_chunks[i + 2],
-                                                average_dim=1), feature_target),
-                                dim=0)
+                            feature_target = torch.cat((_average_batch(
+                                time_chunks[i + 2],
+                                average_dim=1), feature_target),
+                                                       dim=0)
                 else:
                     # batch * x.size(1)
                     context_lengths = [_ // 2 for _ in lengths]
@@ -369,16 +369,18 @@ class Lipreading(nn.Module):
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                        feature_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
+                        feature_predict = torch.einsum('bm,mc->bc', scores,
+                                                       self.membanks)
                     else:
                         # input query, recon_target
                         feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
-                            feature_context.view(B, 1, feature_context.shape[1]),
+                            feature_context.view(B, 1,
+                                                 feature_context.shape[1]),
                             feature_target.view(B, 1, feature_target.shape[1]),
                             inference=False)
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
-        
+
         elif self.modality == 'audio':
             B, C, T = x.size()
             x = self.trunk(x)

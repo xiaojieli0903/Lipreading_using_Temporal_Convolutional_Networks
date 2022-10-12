@@ -163,8 +163,7 @@ def load_args(default_config=None):
         action='store_true',
         help=
         'If True, allows to init from model with mismatching weight tensors. Useful to init from model with different '
-        'number of classes'
-    )
+        'number of classes')
     # -- feature extractor
     parser.add_argument('--extract-feats',
                         default=False,
@@ -264,8 +263,10 @@ def extract_feats(model, path_list):
         idx += 1
         data_name = single_path.split('/')[-1]
         out_path = os.path.join(args.mouth_embedding_out_path, data_name)
-        save2npz(out_path,
-                 model(torch.FloatTensor(data)[None, None, :, :, :].cuda(), lengths=[data.shape[0]]).cpu().detach().numpy())
+        save2npz(
+            out_path,
+            model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
+                  lengths=[data.shape[0]]).cpu().detach().numpy())
 
 
 def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
@@ -284,7 +285,8 @@ def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
         if average_dim == -1:
             loss = torch.sum(torch.pow(pred - target, 2))
         else:
-            loss = torch.sum(torch.pow(pred - target, 2)) / target.shape[average_dim]
+            loss = torch.sum(torch.pow(pred - target,
+                                       2)) / target.shape[average_dim]
     elif loss_type == 'cosine':
         loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
     else:
@@ -383,8 +385,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                                               args.prediction_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict,
-                                              feature_target,
+                loss_predict = calculate_loss(feature_predict, feature_target,
                                               args.prediction_loss_type,
                                               args.loss_average_dim)
             prediction_loss_name = 'loss_' + args.prediction_loss_type
@@ -445,9 +446,11 @@ def get_model_from_json():
     args.predict_residual = args_loaded.get("predict_residual", False)
     args.predict_type = args_loaded.get("predict_type", 0)
     args.block_size = args_loaded.get("block_size", 4)
-    args.memory_options = args_loaded.get("memory_options", {'radius': 16,
-                                                             'slot': 112,
-                                                             'head': 8})
+    args.memory_options = args_loaded.get("memory_options", {
+        'radius': 16,
+        'slot': 112,
+        'head': 8
+    })
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -489,8 +492,7 @@ def get_model_from_json():
                        predict_residual=args.predict_residual,
                        predict_type=args.predict_type,
                        block_size=args.block_size,
-                       memory_options=args.memory_options
-                       ).cuda()
+                       memory_options=args.memory_options).cuda()
     calculateNorm2(model)
     return model
 
