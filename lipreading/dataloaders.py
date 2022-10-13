@@ -1,14 +1,14 @@
+import random
 from functools import partial
 
 import numpy as np
-import random
 import torch
+from mmcv.utils import build_from_cfg
 from torch.utils.data import DataLoader
 
 from lipreading.dataset import MyDataset, pad_packed_collate
 from lipreading.preprocess import *
 from lipreading.utils import SAMPLERS
-from mmcv.utils import build_from_cfg
 
 
 def build_sampler(cfg, default_args=None):
