@@ -170,8 +170,7 @@ def load_args(default_config=None):
         action='store_true',
         help=
         'If True, allows to init from model with mismatching weight tensors. Useful to init from model with different '
-        'number of classes'
-    )
+        'number of classes')
     # -- feature extractor
     parser.add_argument('--extract-feats',
                         default=False,
@@ -231,7 +230,7 @@ def load_args(default_config=None):
     parser.add_argument('--predict-loss-weight',
                         type=float,
                         default=1.0,
-                        help='the weight of the prediction loss.')
+                        help='the weight of the predict loss.')
 
     # cls loss weight
     parser.add_argument('--cls-loss-weight',
@@ -248,11 +247,26 @@ def load_args(default_config=None):
                         default=False,
                         action='store_true',
                         help='detach the target when calculate loss.')
-    # prediction loss type
+    # predict loss type
     parser.add_argument('--predict-loss-type',
                         type=str,
                         default='l2',
-                        help='the type of the prediction loss.')
+                        help='the type of the predict loss.')
+    # add memory loss
+    parser.add_argument('--add-memory-loss',
+                        default=False,
+                        action='store_true',
+                        help='whether add the memory loss from mvm.')
+    # memory target reconstruction loss weight
+    parser.add_argument('--recon-loss-weight',
+                        type=float,
+                        default=1.0,
+                        help='the weight of the recon loss.')
+    # memory slots difference loss weight
+    parser.add_argument('--contrastive-loss-weight',
+                        type=float,
+                        default=0.01,
+                        help='the weight of the contrastive loss.')
     args = parser.parse_args()
     return args
 
@@ -276,16 +290,18 @@ def extract_feats(model, path_list):
         idx += 1
         data_name = single_path.split('/')[-1]
         out_path = os.path.join(args.mouth_embedding_out_path, data_name)
-        save2npz(out_path,
-                 model(torch.FloatTensor(data)[None, None, :, :, :].cuda(), lengths=[data.shape[0]]).cpu().detach().numpy())
+        save2npz(
+            out_path,
+            model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
+                  lengths=[data.shape[0]]).cpu().detach().numpy())
 
 
 def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
     """calculate loss.
 
     Args:
-        pred (torch.Tensor): The prediction.
-        target (torch.Tensor): The learning target of the prediction.
+        pred (torch.Tensor): The predict.
+        target (torch.Tensor): The learning target of the predict.
         loss_type (str): The type of the  loss
         average_dim (int): The average dim of loss.
     Returns:
@@ -296,7 +312,8 @@ def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
         if average_dim == -1:
             loss = torch.sum(torch.pow(pred - target, 2))
         else:
-            loss = torch.sum(torch.pow(pred - target, 2)) / target.shape[average_dim]
+            loss = torch.sum(torch.pow(pred - target,
+                                       2)) / target.shape[average_dim]
     elif loss_type == 'cosine':
         loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
     else:
@@ -323,7 +340,7 @@ def evaluate(model, dset_loader, criterion):
             else:
                 boundaries = None
             if model.module.predict_future >= 0:
-                logits, feature_predict, feature_target = model(
+                logits, feature_predict, feature_target, _, _= model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -385,7 +402,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
         if model.module.predict_future >= 0:
-            logits, feature_predict, feature_target = model(
+            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
@@ -393,17 +410,23 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
             if args.detach_target:
                 loss_predict = calculate_loss(feature_predict,
                                               feature_target.detach(),
-                                              args.prediction_loss_type,
+                                              args.predict_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict,
-                                              feature_target,
-                                              args.prediction_loss_type,
+                loss_predict = calculate_loss(feature_predict, feature_target,
+                                              args.predict_loss_type,
                                               args.loss_average_dim)
-            prediction_loss_name = 'loss_' + args.prediction_loss_type
-            loss_dict[prediction_loss_name] = loss_predict
-            loss_weight[prediction_loss_name] = args.predict_loss_weight
+            predict_loss_name = 'loss_' + args.predict_loss_type
+            loss_dict[predict_loss_name] = loss_predict
+            loss_weight[predict_loss_name] = args.predict_loss_weight
             loss += args.predict_loss_weight * loss_predict
+            if args.add_memory_loss and target_recon_loss is not None:
+                loss += args.recon_loss_weight * target_recon_loss
+                loss += args.contrastive_loss_weight * contrastive_loss
+                loss_dict['loss_target_recon'] = target_recon_loss
+                loss_weight['loss_target_recon'] = args.recon_loss_weight
+                loss_dict['loss_contrastive'] = contrastive_loss
+                loss_weight['loss_contrastive'] = args.contrastive_loss_weight
         else:
             logits = model(input.unsqueeze(1).cuda(),
                            lengths=lengths,
@@ -459,9 +482,12 @@ def get_model_from_json():
     args.predict_residual = args_loaded.get("predict_residual", False)
     args.predict_type = args_loaded.get("predict_type", 0)
     args.block_size = args_loaded.get("block_size", 4)
-    args.memory_options = args_loaded.get("memory_options", {'radius': 16,
-                                                             'slot': 112,
-                                                             'head': 8})
+    args.memory_type = args_loaded.get('memory_type', 'memdpc')
+    args.memory_options = args_loaded.get("memory_options", {
+        'radius': 16,
+        'slot': 112,
+        'head': 8
+    })
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -503,8 +529,8 @@ def get_model_from_json():
                        predict_residual=args.predict_residual,
                        predict_type=args.predict_type,
                        block_size=args.block_size,
-                       memory_options=args.memory_options
-                       ).cuda()
+                       memory_type=args.memory_type,
+                       memory_options=args.memory_options).cuda()
     calculateNorm2(model)
     return model
 

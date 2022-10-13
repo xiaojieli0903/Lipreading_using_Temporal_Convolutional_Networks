@@ -74,14 +74,11 @@ class Memory(nn.Module):
 
             attention_recon = torch.matmul(value_address, self.value)  # BS,512
 
-            contrastive_loss = 0.5 * torch.abs(
+            contrastive_loss = torch.abs(
                 torch.eye(self.n_slot).cuda() -
-                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum(
-                )  # n_slot, n_slot
-            contrastive_loss = contrastive_loss.unsqueeze(0)
+                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum() * 0.01  # n_slot, n_slot
 
-            recon_loss = torch.abs(1.0 - F.cosine_similarity(attention_recon, value_merge.detach(), 1))  # BS
-            recon_loss = recon_loss.view(B, S).sum(1)  # B
+            recon_loss = torch.abs(1.0 - F.cosine_similarity(attention_recon, value_merge.detach(), 1)).sum() / (B * S)
 
             if self.diff_key_value:
                 attention_recon = self.v_up(attention_recon)

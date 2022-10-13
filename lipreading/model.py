@@ -269,8 +269,8 @@ class Lipreading(nn.Module):
                     nn.Linear(self.backend_out, self.backend_out))
             else:
                 if self.memory_type == 'memdpc':
-                    self.membanks = nn.Parameter(
-                        torch.randn(self.membanks_size, self.backend_out))
+                    self.register_parameter('membanks', nn.Parameter(
+                        torch.randn(self.membanks_size, self.backend_out)))
                     # input_size = B * T * self.backend_out
                     self.network_pred = nn.Sequential(
                         nn.Linear(self.backend_out, self.backend_out),
@@ -283,7 +283,7 @@ class Lipreading(nn.Module):
                                          n_slot=memory_options['slot'],
                                          n_head=memory_options['head'])
                 else:
-                    raise RuntimeError(f'{self.memory_type} is not supported.') 
+                    raise RuntimeError(f'{self.memory_type} is not supported.')
 
         if tcn_options:
             tcn_class = TCN if len(
@@ -349,10 +349,10 @@ class Lipreading(nn.Module):
                                 torch.cat(time_chunks[i:i + 2], 1),
                                 average_dim=1), feature_context),
                                                         dim=0)
-                            feature_target = torch.cat(
-                                (_average_batch(time_chunks[i + 2],
-                                                average_dim=1), feature_target),
-                                dim=0)
+                            feature_target = torch.cat((_average_batch(
+                                time_chunks[i + 2],
+                                average_dim=1), feature_target),
+                                                       dim=0)
                 else:
                     # batch * x.size(1)
                     context_lengths = [_ // 2 for _ in lengths]
@@ -366,19 +366,23 @@ class Lipreading(nn.Module):
                 if not self.use_memory:
                     feature_predict = self.network_pred(feature_context)
                 else:
+                    target_recon_loss = contrastive_loss = None
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                        feature_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
+                        feature_predict = torch.einsum('bm,mc->bc', scores,
+                                                       self.membanks)
                     else:
                         # input query, recon_target
                         feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
-                            feature_context.view(B, 1, feature_context.shape[1]),
-                            feature_target.view(B, 1, feature_target.shape[1]),
+                            feature_context.view(-1, 1,
+                                                 feature_context.shape[1]),
+                            feature_target.view(-1, 1, feature_target.shape[1]),
                             inference=False)
+                        feature_predict = feature_predict.view(-1, feature_predict.shape[2])
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
-        
+
         elif self.modality == 'audio':
             B, C, T = x.size()
             x = self.trunk(x)
@@ -395,8 +399,7 @@ class Lipreading(nn.Module):
             if self.predict_future <= 0:
                 return self.tcn(x, lengths, B, targets)
             else:
-                return self.tcn(x, lengths, B,
-                                targets), feature_predict, feature_target
+                return self.tcn(x, lengths, B, targets), feature_predict, feature_target, target_recon_loss, contrastive_loss
 
         # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 
