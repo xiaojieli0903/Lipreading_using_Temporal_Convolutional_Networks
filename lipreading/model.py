@@ -269,8 +269,8 @@ class Lipreading(nn.Module):
                     nn.Linear(self.backend_out, self.backend_out))
             else:
                 if self.memory_type == 'memdpc':
-                    self.membanks = nn.Parameter(
-                        torch.randn(self.membanks_size, self.backend_out))
+                    self.register_parameter('membanks', nn.Parameter(
+                        torch.randn(self.membanks_size, self.backend_out)))
                     # input_size = B * T * self.backend_out
                     self.network_pred = nn.Sequential(
                         nn.Linear(self.backend_out, self.backend_out),
@@ -366,6 +366,7 @@ class Lipreading(nn.Module):
                 if not self.use_memory:
                     feature_predict = self.network_pred(feature_context)
                 else:
+                    target_recon_loss = contrastive_loss = None
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
@@ -374,10 +375,11 @@ class Lipreading(nn.Module):
                     else:
                         # input query, recon_target
                         feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
-                            feature_context.view(B, 1,
+                            feature_context.view(-1, 1,
                                                  feature_context.shape[1]),
-                            feature_target.view(B, 1, feature_target.shape[1]),
+                            feature_target.view(-1, 1, feature_target.shape[1]),
                             inference=False)
+                        feature_predict = feature_predict.view(-1, feature_predict.shape[2])
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
 
@@ -397,8 +399,7 @@ class Lipreading(nn.Module):
             if self.predict_future <= 0:
                 return self.tcn(x, lengths, B, targets)
             else:
-                return self.tcn(x, lengths, B,
-                                targets), feature_predict, feature_target
+                return self.tcn(x, lengths, B, targets), feature_predict, feature_target, target_recon_loss, contrastive_loss
 
         # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 
