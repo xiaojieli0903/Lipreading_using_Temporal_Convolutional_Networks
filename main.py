@@ -435,7 +435,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
             (batch_idx == len(dset_loader) - 1)) and args.rank == 0:
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
-                loww_weight, running_corrects, running_all, batch_time, data_time, lr,
+                loss_weight, running_corrects, running_all, batch_time, data_time, lr,
                 torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter,
                 dataset_num)
 
