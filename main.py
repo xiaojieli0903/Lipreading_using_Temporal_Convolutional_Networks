@@ -30,7 +30,7 @@ from lipreading.utils import (AverageMeter, CheckpointSaver, calculateNorm2,
 from mmcv.runner import get_dist_info, init_dist
 global logger
 
-mp.set_start_method('fork', force=True)
+mp.set_start_method('spawn', force=True)
 
 
 def load_args(default_config=None):
@@ -196,7 +196,7 @@ def load_args(default_config=None):
                         type=int,
                         help='display interval')
     parser.add_argument('--workers',
-                        default=8,
+                        default=4,
                         type=int,
                         help='number of data loading workers')
     # paths
