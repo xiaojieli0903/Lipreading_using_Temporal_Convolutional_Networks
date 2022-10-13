@@ -1,6 +1,8 @@
-MODEL_JSON_PATH=configs/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block5_usememory.json
-ANNONATION_DIRECTORY=/home/gao2/disk/datasets/lrw/lipread_mp4/
-MOUTH_ROIS_DIRECTORY=/home/gao2/disk/datasets/lrw/visual_data
+#!/usr/bin/env bash
+
+MODEL_JSON_PATH=configs/lrw_resnet18_mstcn.json
+ANNONATION_DIRECTORY=/disk/gao2/datasets/lrw/lipread_mp4/
+MOUTH_ROIS_DIRECTORY=/disk/gao2/datasets/lrw/visual_data
 
 GPUS=$1
 NNODES=${NNODES:-1}
@@ -16,6 +18,4 @@ python -m torch.distributed.launch \
     --nproc_per_node=$GPUS \
     --master_port=$PORT \
     main.py --modality video --config-path $MODEL_JSON_PATH --annonation-direc $ANNONATION_DIRECTORY --data-dir $MOUTH_ROIS_DIRECTORY \
-    --alpha 0 --epochs 20  --predict-loss-weight 1 --loss-average-dim 0 \
-    --exp-name _nomixup_20epochs_lw1_avg0_detach --detach-target
-
+    --alpha 0 --epochs 20 --exp-name _nomixup_20epochs
