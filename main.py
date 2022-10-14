@@ -338,6 +338,7 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels, boundaries = data
                 boundaries = boundaries.cuda()
             else:
+                input, lengths, labels = data
                 boundaries = None
             if model.module.predict_future >= 0:
                 logits, feature_predict, feature_target, _, _= model(
@@ -597,17 +598,19 @@ def main():
             model, optimizer, epoch_idx, ckpt_dict = load_model(
                 args.model_path, model, optimizer)
             args.init_epoch = epoch_idx
-            ckpt_saver.set_best_from_ckpt(ckpt_dict)
-            logger.info(
-                f'Model and states have been successfully loaded from {args.model_path}'
-            )
+            if args.rank == 0:
+                ckpt_saver.set_best_from_ckpt(ckpt_dict)
+                logger.info(
+                    f'Model and states have been successfully loaded from {args.model_path}'
+                )
         # init from trained model
         else:
             model = load_model(args.model_path,
                                model,
                                allow_size_mismatch=args.allow_size_mismatch)
-            logger.info(
-                f'Model has been successfully loaded from {args.model_path}')
+            if args.rank == 0:
+                logger.info(
+                    f'Model has been successfully loaded from {args.model_path}')
         # feature extraction
         if args.mouth_patch_path:
             extract_feats(model, args.mouth_patch_path)
@@ -616,9 +619,10 @@ def main():
         if args.test:
             acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                                    criterion)
-            logger.info(
-                f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}"
-            )
+            if args.rank == 0:
+                logger.info(
+                    f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}"
+                )
             return
 
     # -- fix learning rate after loading the ckeckpoint (latency)
