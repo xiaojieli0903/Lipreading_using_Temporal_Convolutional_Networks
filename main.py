@@ -6,6 +6,7 @@
 """ TCN for lipreading"""
 
 import argparse
+import multiprocessing as mp
 import os
 import random
 import time
@@ -14,6 +15,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from mmcv.runner import get_dist_info, init_dist
+from torch.nn.parallel.distributed import DistributedDataParallel
 from tqdm import tqdm
 
 from lipreading.dataloaders import (get_data_loaders,
@@ -21,10 +24,14 @@ from lipreading.dataloaders import (get_data_loaders,
 from lipreading.mixup import mixup_criterion, mixup_data
 from lipreading.model import Lipreading
 from lipreading.optim_utils import CosineScheduler, get_optimizer
-from lipreading.utils import (AverageMeter, CheckpointSaver, calculateNorm2,
-                              get_logger, get_save_folder, load_json,
-                              load_model, save2npz, showLR,
+from lipreading.utils import (AverageMeter, CheckpointSaver, DataPrefetcher,
+                              calculateNorm2, get_logger, get_save_folder,
+                              load_json, load_model, save2npz, showLR,
                               update_logger_batch)
+
+global logger
+
+mp.set_start_method('spawn', force=True)
 
 
 def load_args(default_config=None):
@@ -190,7 +197,7 @@ def load_args(default_config=None):
                         type=int,
                         help='display interval')
     parser.add_argument('--workers',
-                        default=8,
+                        default=4,
                         type=int,
                         help='number of data loading workers')
     # paths
@@ -209,6 +216,16 @@ def load_args(default_config=None):
                         type=str,
                         default='',
                         help='the name of the exp.')
+    # port
+    parser.add_argument('--port',
+                        type=int,
+                        default=29500,
+                        help='the port number.')
+    # local rank
+    parser.add_argument('--local_rank',
+                        type=int,
+                        default=0,
+                        help='the local rank.')
     # predict loss weight
     parser.add_argument('--predict-loss-weight',
                         type=float,
@@ -255,11 +272,6 @@ def load_args(default_config=None):
 
 
 args = load_args()
-
-torch.manual_seed(1)
-np.random.seed(1)
-random.seed(1)
-torch.backends.cudnn.benchmark = True
 
 
 def extract_feats(model, path_list):
@@ -328,8 +340,8 @@ def evaluate(model, dset_loader, criterion):
             else:
                 input, lengths, labels = data
                 boundaries = None
-            if model.predict_future >= 0:
-                logits, feature_predict, feature_target, _, _ = model(
+            if model.module.predict_future >= 0:
+                logits, feature_predict, feature_target, _, _= model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -353,14 +365,16 @@ def evaluate(model, dset_loader, criterion):
 
 
 def train(model, dset_loader, criterion, epoch, optimizer, logger):
+    dataset_num = len(dset_loader.dataset)
+    dset_loader = iter(DataPrefetcher(dset_loader))
     data_time = AverageMeter()
     batch_time = AverageMeter()
 
     lr = showLR(optimizer)
-
-    logger.info('-' * 10)
-    logger.info(f"Epoch {epoch}/{args.epochs - 1}")
-    logger.info(f"Current learning rate: {lr}")
+    if args.rank == 0:
+        logger.info('-' * 10)
+        logger.info(f"Epoch {epoch}/{args.epochs - 1}")
+        logger.info(f"Current learning rate: {lr}")
 
     model.train()
     running_loss = 0.
@@ -377,18 +391,18 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         else:
             input, lengths, labels = data
             boundaries = None
-
+        if input is None:
+            break
         lr = showLR(optimizer)
         # measure data loading time
         data_time.update(time.time() - end)
-
         # --
         input, labels_a, labels_b, lam = mixup_data(input, labels, args.alpha)
         labels_a, labels_b = labels_a.cuda(), labels_b.cuda()
 
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
-        if model.predict_future >= 0:
+        if model.module.predict_future >= 0:
             logits, feature_predict, feature_target, target_recon_loss, contrastive_loss = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
@@ -440,13 +454,14 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                 labels_b.view_as(predicted)).sum().item()
         running_all += input.size(0)
         # -- log intermediate results
-        if batch_idx % args.interval == 0 or (batch_idx
-                                              == len(dset_loader) - 1):
+        global_iter = epoch * len(dset_loader) + batch_idx + 1
+        if (batch_idx % args.interval == 0 or
+            (batch_idx == len(dset_loader) - 1)) and args.rank == 0:
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
-                loss_weight, running_corrects, running_all, batch_time,
-                data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024)
+                loss_weight, running_corrects, running_all, batch_time, data_time, lr,
+                torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter,
+                dataset_num)
 
     return model
 
@@ -522,12 +537,40 @@ def get_model_from_json():
 
 
 def main():
+    if 'LOCAL_RANK' not in os.environ:
+        os.environ['LOCAL_RANK'] = str(args.local_rank)
+    dist_params = dict(backend='nccl')
+    init_dist('pytorch', **dist_params)
+    rank, world_size = get_dist_info()
+    args.gpu_ids = range(world_size)
+    args.rank = rank
+    args.world_size = world_size
+    print(f"rank={rank}/world_size={world_size}")
+
+    # fix random seed
+    seed = rank
+    args.seed = seed
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    #     torch.cuda.manual_seed(seed)
+    #     torch.cuda.manual_seed_all(seed)
+    #     torch.backends.cudnn.benchmark = False
+    #     torch.backends.cudnn.deterministic = True
+    #     torch.Generator().manual_seed(seed)
+
+    #     torch.manual_seed(1)
+    #     np.random.seed(1)
+    #     random.seed(1)
+    torch.backends.cudnn.benchmark = True
 
     # -- logging
-    save_path = get_save_folder(args)
-    print(f"Model and log being saved in: {save_path}")
-    logger = get_logger(args, save_path)
-    ckpt_saver = CheckpointSaver(save_path)
+    if args.rank == 0:
+        save_path = get_save_folder(args)
+        print(f"Model and log being saved in: {save_path}")
+        logger = get_logger(args, save_path)
+        ckpt_saver = CheckpointSaver(save_path)
 
     # -- get model
     model = get_model_from_json()
@@ -540,6 +583,13 @@ def main():
     # -- get learning rate scheduler
     scheduler = CosineScheduler(args.lr, args.epochs)
 
+    # distributed model
+    model = DistributedDataParallel(model,
+                                    device_ids=[torch.cuda.current_device()],
+                                    output_device=torch.cuda.current_device(),
+                                    broadcast_buffers=False,
+                                    find_unused_parameters=True)
+
     if args.model_path:
         assert args.model_path.endswith('.pth') and os.path.isfile(args.model_path), \
             f"'.pth' model path does not exist. Path input: {args.model_path}"
@@ -548,17 +598,19 @@ def main():
             model, optimizer, epoch_idx, ckpt_dict = load_model(
                 args.model_path, model, optimizer)
             args.init_epoch = epoch_idx
-            ckpt_saver.set_best_from_ckpt(ckpt_dict)
-            logger.info(
-                f'Model and states have been successfully loaded from {args.model_path}'
-            )
+            if args.rank == 0:
+                ckpt_saver.set_best_from_ckpt(ckpt_dict)
+                logger.info(
+                    f'Model and states have been successfully loaded from {args.model_path}'
+                )
         # init from trained model
         else:
             model = load_model(args.model_path,
                                model,
                                allow_size_mismatch=args.allow_size_mismatch)
-            logger.info(
-                f'Model has been successfully loaded from {args.model_path}')
+            if args.rank == 0:
+                logger.info(
+                    f'Model has been successfully loaded from {args.model_path}')
         # feature extraction
         if args.mouth_patch_path:
             extract_feats(model, args.mouth_patch_path)
@@ -567,9 +619,10 @@ def main():
         if args.test:
             acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                                    criterion)
-            logger.info(
-                f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}"
-            )
+            if args.rank == 0:
+                logger.info(
+                    f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}"
+                )
             return
 
     # -- fix learning rate after loading the ckeckpoint (latency)
@@ -577,33 +630,44 @@ def main():
         scheduler.adjust_lr(optimizer, args.init_epoch - 1)
 
     epoch = args.init_epoch
-    logger.info(model)
+    if args.rank == 0:
+        logger.info(model)
+
     while epoch < args.epochs:
         model = train(model, dset_loaders['train'], criterion, epoch,
-                      optimizer, logger)
+                      optimizer, logger if args.rank == 0 else None)
         acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
                                              criterion)
-        logger.info(
-            f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
+        print(
+            f"rank-{args.rank}-{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
         )
-        # -- save checkpoint
-        save_dict = {
-            'epoch_idx': epoch + 1,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict()
-        }
-        ckpt_saver.save(save_dict, acc_avg_val)
+        if args.rank == 0:
+            logger.info(
+                f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
+            )
+            # -- save checkpoint
+            save_dict = {
+                'epoch_idx': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()
+            }
+            ckpt_saver.save(save_dict, acc_avg_val)
         scheduler.adjust_lr(optimizer, epoch)
         epoch += 1
+        dset_loaders['train'].sampler.set_epoch(epoch)
 
     # -- evaluate best-performing epoch on test partition
     best_fp = os.path.join(ckpt_saver.save_dir, ckpt_saver.best_fn)
     _ = load_model(best_fp, model)
     acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                            criterion)
-    logger.info(
+    print(
         f"Test time performance of best epoch: {acc_avg_test} (loss: {loss_avg_test})"
     )
+    if args.rank == 0:
+        logger.info(
+            f"Test time performance of best epoch: {acc_avg_test} (loss: {loss_avg_test})"
+        )
 
 
 if __name__ == '__main__':

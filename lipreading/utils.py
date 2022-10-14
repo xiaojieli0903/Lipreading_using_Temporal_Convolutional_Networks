@@ -6,6 +6,11 @@ import shutil
 
 import numpy as np
 import torch
+import torch.distributed as dist
+from mmcv.runner import get_dist_info
+from mmcv.utils import Registry, build_from_cfg
+
+SAMPLERS = Registry('sampler')
 
 
 def calculateNorm2(model):
@@ -203,16 +208,21 @@ def get_logger(args, save_path):
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         loss_dict, loss_weight, running_corrects, running_all,
-                        batch_time, data_time, lr, mem):
+                        batch_time, data_time, lr, mem, global_iter, dataset_num):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
+    all_iters = args.epochs * len(dset_loader)
+    eta = batch_time.avg * (all_iters - global_iter) / 3600
+
     logger.info(
-        f"[{batch_idx:5.0f}/{len(dset_loader):5.0f} | {running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)] | "
+        f"[{global_iter}/{all_iters} | {running_all * args.world_size:5.0f}/{dataset_num:5.0f} | "
+        f"{batch_idx:5.0f}/{len(dset_loader.loader):5.0f} ({perc_epoch:.0f}%)] | "
         f"Loss: {running_loss / running_all:.4f} | Acc:{running_corrects / running_all:.4f} | "
         f"Cost time:{batch_time.val:1.3f} ({batch_time.avg:1.3f})s | "
         f"lr:{lr:.6f} | "
         f"Mem:{mem:.3f}M | "
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
-        f"Instances per second: {args.batch_size/batch_time.avg:.2f}")
+        f"Instances per second: {args.batch_size*args.world_size/batch_time.avg:.2f} | ETA: {eta:.2f}h"
+    )
     for key in loss_dict:
         logger.info(
             f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}"
@@ -228,3 +238,91 @@ def get_save_folder(args):
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
     return save_path
+
+
+def sync_random_seed(seed=None, device='cuda'):
+    """Make sure different ranks share the same seed.
+
+    All workers must call this function, otherwise it will deadlock.
+    This method is generally used in `DistributedSampler`,
+    because the seed should be identical across all processes
+    in the distributed group.
+
+    In distributed sampling, different ranks should sample non-overlapped
+    data in the dataset. Therefore, this function is used to make sure that
+    each rank shuffles the data indices in the same order based
+    on the same seed. Then different ranks could use different indices
+    to select non-overlapped data from the same data list.
+
+    Args:
+        seed (int, Optional): The seed. Default to None.
+        device (str): The device where the seed will be put on.
+            Default to 'cuda'.
+
+    Returns:
+        int: Seed to be used.
+    """
+    if seed is None:
+        seed = np.random.randint(2**31)
+    assert isinstance(seed, int)
+
+    rank, world_size = get_dist_info()
+
+    if world_size == 1:
+        return seed
+
+    if rank == 0:
+        random_num = torch.tensor(seed, dtype=torch.int32, device=device)
+    else:
+        random_num = torch.tensor(0, dtype=torch.int32, device=device)
+    dist.broadcast(random_num, src=0)
+    return random_num.item()
+
+
+class DataPrefetcher(object):
+    def __init__(self, loader):
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_items = next(self.loader)
+        except StopIteration:
+            if isinstance(self.next_items, dict):
+                self.next_items = {key: None for key in self.next_items.keys()}
+            elif isinstance(self.next_items, list):
+                self.next_items = [None for item in self.next_items]
+            return self.next_items
+        except:
+            raise RuntimeError('load data error')
+
+        with torch.cuda.stream(self.stream):
+            self.next_items = self.tocuda(self.next_items)
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        next_items = self.next_items
+        self.preload()
+        return next_items
+
+    def tocuda(self, obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.cuda(non_blocking=True)
+        elif isinstance(obj, str):
+            return obj
+        elif isinstance(obj, list):
+            return [self.tocuda(i) for i in obj]
+        elif isinstance(obj, dict):
+            return {k: self.tocuda(v) for k, v in obj.items()}
+        elif isinstance(obj, tuple):
+            return tuple([self.tocuda(i) for i in obj])
+
+    def __iter__(self):
+        return self
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __next__(self):
+        return self.next()
