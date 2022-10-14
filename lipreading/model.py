@@ -62,10 +62,12 @@ class MultiscaleMultibranchTCN(nn.Module):
 
         self.consensus_func = _average_batch
 
-    def forward(self, x, lengths, B, targets):
+    def forward(self, x, lengths, B, targets, extract_feats=False):
         # x needs to have dimension (N, C, L) in order to be passed into CNN
         xtrans = x.transpose(1, 2)
         out = self.mb_ms_tcn(xtrans)
+        if extract_feats:
+            return out.transpose(1, 2)
         out = self.consensus_func(out, lengths, B)
         if isinstance(self.tcn_output, CombineMarginLinear):
             return self.tcn_output(out, targets)
@@ -105,9 +107,11 @@ class TCN(nn.Module):
 
         self.has_aux_losses = False
 
-    def forward(self, x, lengths, B, targets):
+    def forward(self, x, lengths, B, targets, extract_feats=False):
         # x needs to have dimension (N, C, L) in order to be passed into CNN
         x = self.tcn_trunk(x.transpose(1, 2))
+        if extract_feats:
+            return x
         x = self.consensus_func(x, lengths, B)
         if isinstance(self.tcn_output, CombineMarginLinear):
             return self.tcn_output(x, targets)
@@ -152,9 +156,11 @@ class DenseTCN(nn.Module):
 
         self.consensus_func = _average_batch
 
-    def forward(self, x, lengths, B, targets):
+    def forward(self, x, lengths, B, targets, extract_feats=False):
         # B, C, T
         x = self.tcn_trunk(x.transpose(1, 2))
+        if extract_feats:
+            return x.transpose(1, 2)
         # B, C_new, T
         x = self.consensus_func(x.transpose(1, 2), lengths, B)
         if isinstance(self.tcn_output, CombineMarginLinear):
@@ -184,7 +190,10 @@ class Lipreading(nn.Module):
                  predict_type=0,
                  block_size=4,
                  memory_type='memdpc',
-                 memory_options={}):
+                 memory_options={},
+                 use_gan=False,
+                 output_layer='backbone'
+                 ):
         super(Lipreading, self).__init__()
         if linear_config is None:
             linear_config = {'linear_type': 'Linear'}
@@ -201,6 +210,8 @@ class Lipreading(nn.Module):
         self.predict_type = predict_type
         self.block_size = block_size
         self.memory_type = memory_type
+        self.use_gan = use_gan
+        self.output_layer = output_layer
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -320,7 +331,7 @@ class Lipreading(nn.Module):
         # -- initialize
         self._initialize_weights_randomly()
 
-    def forward(self, x, lengths, boundaries=None, targets=None):
+    def forward(self, x, lengths, boundaries=None, targets=None, gan_train=False):
         if self.modality == 'video':
             B, C, T, H, W = x.size()
             x = self.frontend3D(x)
@@ -330,30 +341,41 @@ class Lipreading(nn.Module):
             if self.backbone_type == 'shufflenet':
                 x = x.view(-1, self.stage_out_channels)
             x = x.view(B, Tnew, x.size(1))
+            dim_frame = x.shape[-1]
             if self.predict_future > 0:
+                feature_context = feature_target = features_pos = features_neg = None
+                predict_times = None
                 if self.predict_type == 1:
                     time_chunks = torch.split(x, self.block_size, dim=1)
                     stride = 1
-                    context_block_number = 2
-                    predict_times = len(time_chunks) - context_block_number
-                    feature_context = feature_target = None
+                    context_num = 2
+                    predict_times = len(time_chunks) - context_num
                     for i in range(0, predict_times, stride):
                         # print(i, predict_times, len(time_chunks))
                         if feature_context is None:
-                            feature_context = _average_batch(torch.cat(
-                                time_chunks[i:i + 2], 1),
+                            feature_context = _average_batch(
+                                torch.cat(time_chunks[i:i + context_num], 1),
                                                              average_dim=1)
-                            feature_target = _average_batch(time_chunks[i + 2])
+                            feature_target = _average_batch(time_chunks[i + context_num])
                         else:
                             feature_context = torch.cat((_average_batch(
-                                torch.cat(time_chunks[i:i + 2], 1),
+                                torch.cat(time_chunks[i:i + context_num], 1),
                                 average_dim=1), feature_context),
                                                         dim=0)
                             feature_target = torch.cat((_average_batch(
-                                time_chunks[i + 2],
+                                time_chunks[i + context_num],
                                 average_dim=1), feature_target),
                                                        dim=0)
-                else:
+                        if self.use_gan and i != (predict_times - 1):
+                            features_block = [_average_batch(
+                                time_chunks[idx]).view(B, -1, dim_frame) for idx in range(i, i + context_num + 1)]
+                            if features_pos is None:
+                                # batch * 3 * dim
+                                features_pos = torch.cat(features_block, dim=1)
+                            else:
+                                # (batch * predict_times) * 3 * dim
+                                features_pos = torch.cat((torch.cat(features_block, dim=1), features_pos), dim=0)
+                elif self.predict_type == 0:
                     # batch * x.size(1)
                     context_lengths = [_ // 2 for _ in lengths]
                     feature_context = _average_batch(x.transpose(1, 2),
@@ -362,6 +384,8 @@ class Lipreading(nn.Module):
                         x[index, int(length * 0.75), :]
                         for index, length in enumerate(lengths)
                     ], 0)
+                else:
+                    raise NotImplementedError(f'predict_type {self.predict_type} is not supported.')
 
                 if not self.use_memory:
                     feature_predict = self.network_pred(feature_context)
@@ -376,12 +400,18 @@ class Lipreading(nn.Module):
                         # input query, recon_target
                         feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
                             feature_context.view(-1, 1,
-                                                 feature_context.shape[1]),
-                            feature_target.view(-1, 1, feature_target.shape[1]),
+                                                 dim_frame),
+                            feature_target.view(-1, 1, dim_frame),
                             inference=False)
-                        feature_predict = feature_predict.view(-1, feature_predict.shape[2])
+                        feature_predict = feature_predict.view(-1, dim_frame)
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
+                if self.use_gan:
+                    features_pos = features_pos.view(-1, 3, dim_frame)
+                    features_insert = feature_predict.view(
+                        B, predict_times, dim_frame)[:, :(predict_times - 1), :].reshape(-1, dim_frame)
+                    features_neg = features_pos.clone()
+                    features_neg[:, 1, :] = features_insert
 
         elif self.modality == 'audio':
             B, C, T = x.size()
@@ -389,17 +419,22 @@ class Lipreading(nn.Module):
             x = x.transpose(1, 2)
             lengths = [_ // 640 for _ in lengths]
 
+        if self.extract_feats:
+            if self.output_layer == 'backbone':
+                return x
+
         # -- duration
         if self.use_boundary:
             x = torch.cat([x, boundaries], dim=-1)
 
         if self.extract_feats:
-            return x
+            if self.output_layer == 'backend':
+                return self.tcn(x, lengths, B, targets, True)
         else:
             if self.predict_future <= 0:
                 return self.tcn(x, lengths, B, targets)
             else:
-                return self.tcn(x, lengths, B, targets), feature_predict, feature_target, target_recon_loss, contrastive_loss
+                return self.tcn(x, lengths, B, targets), feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg
 
         # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 

@@ -20,6 +20,7 @@ from lipreading.dataloaders import (get_data_loaders,
                                     get_preprocessing_pipelines)
 from lipreading.mixup import mixup_criterion, mixup_data
 from lipreading.model import Lipreading
+from lipreading.models.discriminator import Discriminator
 from lipreading.optim_utils import CosineScheduler, get_optimizer
 from lipreading.utils import (AverageMeter, CheckpointSaver, calculateNorm2,
                               get_logger, get_save_folder, load_json,
@@ -169,6 +170,11 @@ def load_args(default_config=None):
                         default=False,
                         action='store_true',
                         help='Feature extractor')
+    # -- feature extract layer
+    parser.add_argument('--output-layer',
+                        default='backbone',
+                        help='Feature extractor layer')
+
     parser.add_argument(
         '--mouth-patch-path',
         type=str,
@@ -177,7 +183,7 @@ def load_args(default_config=None):
     )
     parser.add_argument('--mouth-embedding-out-path',
                         type=str,
-                        default=None,
+                        default='',
                         help='Save mouth embeddings to a specificed path')
     # -- json pathname
     parser.add_argument('--config-path',
@@ -250,6 +256,21 @@ def load_args(default_config=None):
                         type=float,
                         default=0.01,
                         help='the weight of the contrastive loss.')
+    # use D
+    parser.add_argument('--use-gan',
+                        default=False,
+                        action='store_true',
+                        help='whether use D.')
+    # D loss weight
+    parser.add_argument('--gan-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the D loss.')
+    # gan start iter
+    parser.add_argument('--gan-start-iter',
+                        type=int,
+                        default=20000,
+                        help='the start iter of the gan loss.')
     args = parser.parse_args()
     return args
 
@@ -281,7 +302,8 @@ def extract_feats(model, path_list):
         save2npz(
             out_path,
             model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
-                  lengths=[data.shape[0]]).cpu().detach().numpy())
+                  lengths=[data.shape[0]],
+                  boundaries=torch.ones(data.shape[0]).cuda().reshape(1, data.shape[0], 1)).cpu().detach().numpy())
 
 
 def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
@@ -314,7 +336,6 @@ def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
 
 
 def evaluate(model, dset_loader, criterion):
-
     model.eval()
 
     running_loss = 0.
@@ -329,7 +350,7 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.predict_future >= 0:
-                logits, feature_predict, feature_target, _, _ = model(
+                logits, feature_predict, feature_target, _, _, _, _ = model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -346,13 +367,13 @@ def evaluate(model, dset_loader, criterion):
     logits = preds = input = labels = None
 
     print(
-        f"{len(dset_loader.dataset)} in total\tCR: {running_corrects/len(dset_loader.dataset)}"
+        f"{len(dset_loader.dataset)} in total\tCR: {running_corrects / len(dset_loader.dataset)}"
     )
     return running_corrects / len(dset_loader.dataset), running_loss / len(
         dset_loader.dataset)
 
 
-def train(model, dset_loader, criterion, epoch, optimizer, logger):
+def train(model, dset_loader, criterion, epoch, optimizer, logger, model_D=None, optimizer_D=None):
     data_time = AverageMeter()
     batch_time = AverageMeter()
 
@@ -368,6 +389,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
     running_all = 0.
     loss_dict = {}
     loss_weight = {}
+    accuracy = {}
 
     end = time.time()
     for batch_idx, data in enumerate(dset_loader):
@@ -389,18 +411,45 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
         if model.predict_future >= 0:
-            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss = model(
+            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
                 targets=labels_a)
+            if args.use_gan:
+                logits_G = model_D(features_neg)
+                labels_G = torch.ones(features_pos.shape[0]).cuda().long()
+                loss_G = criterion(F.softmax(logits_G, dim=-1), labels_G)
+                loss_dict['loss_G'] = loss_G
+                loss_weight['loss_G'] = 0
+                _, predicted_G = torch.max(F.softmax(logits_G, dim=1).data, dim=1)
+                acc_G = predicted_G.eq(labels_G.view_as(predicted_G)).sum().item() / float(labels_G.shape[0])
+                accuracy['loss_G'] = acc_G
+                if batch_idx > args.gan_start_iter:
+                    loss_weight['loss_G'] = args.gan_loss_weight 
+                    loss += args.gan_loss_weight * loss_G
+
+                logits_D = model_D(torch.cat((features_pos.detach(), features_neg.detach()), dim=0))
+                labels_D = torch.cat((torch.ones(features_pos.shape[0]),
+                                      torch.zeros(features_neg.shape[0])), dim=0).cuda().long()
+                loss_D = criterion(
+                    F.softmax(logits_D, dim=-1),
+                    labels_D
+                )
+                loss_dict['loss_D'] = loss_D
+                loss_weight['loss_D'] = 1
+                _, predicted_D = torch.max(F.softmax(logits_D, dim=1).data, dim=1)
+                acc_D = predicted_D.eq(labels_D.view_as(predicted_D)).sum().item() / float(labels_D.shape[0])
+                accuracy['loss_D'] = acc_D
+
             if args.detach_target:
                 loss_predict = calculate_loss(feature_predict,
                                               feature_target.detach(),
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict, feature_target,
+                loss_predict = calculate_loss(feature_predict,
+                                              feature_target,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             predict_loss_name = 'loss_' + args.predict_loss_type
@@ -429,15 +478,24 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         loss.backward()
         optimizer.step()
 
+        if args.use_gan:
+            optimizer_D.zero_grad()
+            loss_D.backward()
+            optimizer_D.step()
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
         # -- compute running performance
         _, predicted = torch.max(F.softmax(logits, dim=1).data, dim=1)
+        acc_cls = (lam * predicted.eq(labels_a.view_as(
+            predicted)).sum().item() + (1 - lam) * predicted.eq(
+            labels_b.view_as(predicted)).sum().item()) / float(predicted.shape[0])
+        accuracy['loss_KL'] = acc_cls
         running_loss += loss.item() * input.size(0)
         running_corrects += lam * predicted.eq(labels_a.view_as(
             predicted)).sum().item() + (1 - lam) * predicted.eq(
-                labels_b.view_as(predicted)).sum().item()
+            labels_b.view_as(predicted)).sum().item()
         running_all += input.size(0)
         # -- log intermediate results
         if batch_idx % args.interval == 0 or (batch_idx
@@ -446,7 +504,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 loss_weight, running_corrects, running_all, batch_time,
                 data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024)
+                torch.cuda.max_memory_allocated() / 1024 / 1024, accuracy)
 
     return model
 
@@ -516,13 +574,15 @@ def get_model_from_json():
                        predict_type=args.predict_type,
                        block_size=args.block_size,
                        memory_type=args.memory_type,
-                       memory_options=args.memory_options).cuda()
+                       memory_options=args.memory_options,
+                       use_gan=args.use_gan,
+		       output_layer=args.output_layer
+                       ).cuda()
     calculateNorm2(model)
     return model
 
 
 def main():
-
     # -- logging
     save_path = get_save_folder(args)
     print(f"Model and log being saved in: {save_path}")
@@ -539,6 +599,15 @@ def main():
     optimizer = get_optimizer(args, optim_policies=model.parameters())
     # -- get learning rate scheduler
     scheduler = CosineScheduler(args.lr, args.epochs)
+    # -- get D model
+    model_D = optimizer_D = None
+    if args.use_gan:
+        model_D = Discriminator(512 * 3, feature_dim=512, dropout_rate=0.5).cuda()
+        optimizer_D = get_optimizer(args, optim_policies=model_D.parameters())
+        calculateNorm2(model_D)
+    logger.info(model)
+    if args.use_gan:
+        logger.info(model_D)
 
     if args.model_path:
         assert args.model_path.endswith('.pth') and os.path.isfile(args.model_path), \
@@ -552,6 +621,12 @@ def main():
             logger.info(
                 f'Model and states have been successfully loaded from {args.model_path}'
             )
+            if args.use_gan:
+                model_D, optimizer_D = load_model(
+                    args.model_path, model_D, optimizer, discriminator_flag=True)
+                logger.info(
+                    f'Discriminator Model and states have been successfully loaded from {args.model_path}'
+                )
         # init from trained model
         else:
             model = load_model(args.model_path,
@@ -559,11 +634,20 @@ def main():
                                allow_size_mismatch=args.allow_size_mismatch)
             logger.info(
                 f'Model has been successfully loaded from {args.model_path}')
+            if args.use_gan:
+                model_D = load_model(
+                    args.model_path, model_D, allow_size_mismatch=args.allow_size_mismatch, discriminator_flag=True)
+                logger.info(
+                    f'Discriminator Model has been successfully loaded from {args.model_path}'
+                )
         # feature extraction
         if args.mouth_patch_path:
+            if args.mouth_embedding_out_path == '':
+                args.mouth_embedding_out_path = os.path.join(os.path.dirname(args.model_path), f'features_{args.output_layer}')
             extract_feats(model, args.mouth_patch_path)
             return
-        # if test-time, performance on test partition and exit. Otherwise, performance on validation and continue (sanity check for reload)
+        # if test-time, performance on test partition and exit.
+        # Otherwise, performance on validation and continue (sanity check for reload)
         if args.test:
             acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                                    criterion)
@@ -577,10 +661,9 @@ def main():
         scheduler.adjust_lr(optimizer, args.init_epoch - 1)
 
     epoch = args.init_epoch
-    logger.info(model)
     while epoch < args.epochs:
         model = train(model, dset_loaders['train'], criterion, epoch,
-                      optimizer, logger)
+                      optimizer, logger, model_D, optimizer_D)
         acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
                                              criterion)
         logger.info(

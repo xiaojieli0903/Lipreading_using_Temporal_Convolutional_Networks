@@ -147,7 +147,7 @@ class CheckpointSaver:
         self.best_for_stage = ckpt_dict.get('best_prec_per_stage', None)
 
 
-def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
+def load_model(load_path, model, optimizer=None, allow_size_mismatch=False, discriminator_flag=False):
     """
     Load model from file
     If optimizer is passed, then the loaded dictionary is expected to contain also the states of the optimizer.
@@ -160,7 +160,10 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     ), "Error when loading the model, provided path not found: {}".format(
         load_path)
     checkpoint = torch.load(load_path)
-    loaded_state_dict = checkpoint['model_state_dict']
+    if not discriminator_flag:
+        loaded_state_dict = checkpoint['model_state_dict']
+    else:
+        loaded_state_dict = checkpoint['model_D_state_dict']
 
     if allow_size_mismatch:
         loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
@@ -176,8 +179,12 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     # -- copy loaded state into current model and, optionally, optimizer
     model.load_state_dict(loaded_state_dict, strict=not allow_size_mismatch)
     if optimizer is not None:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        return model, optimizer, checkpoint['epoch_idx'], checkpoint
+        if not discriminator_flag:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            return model, optimizer, checkpoint['epoch_idx'], checkpoint
+        else:
+            optimizer.load_state_dict(checkpoint['optimizer_D_state_dict'])
+            return model, optimizer
     return model
 
 
@@ -203,7 +210,7 @@ def get_logger(args, save_path):
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         loss_dict, loss_weight, running_corrects, running_all,
-                        batch_time, data_time, lr, mem):
+                        batch_time, data_time, lr, mem, accuracy):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     logger.info(
         f"[{batch_idx:5.0f}/{len(dset_loader):5.0f} | {running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)] | "
@@ -214,9 +221,14 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
         f"Instances per second: {args.batch_size/batch_time.avg:.2f}")
     for key in loss_dict:
-        logger.info(
-            f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}"
-        )
+        if key in accuracy.keys():
+            logger.info(
+                f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}, acc: {accuracy[key] * 100:2.4f}%"
+            )
+        else:
+            logger.info(
+                f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}"
+            )
 
 
 def get_save_folder(args):
