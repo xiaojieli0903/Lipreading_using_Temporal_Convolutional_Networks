@@ -1,4 +1,4 @@
-MODEL_JSON_PATH=configs/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block5_usememory.json
+MODEL_JSON_PATH=configs/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block5_usememory_mvm.json
 ANNONATION_DIRECTORY=/userhome/datasets/lipread_mp4/
 MOUTH_ROIS_DIRECTORY=/userhome/datasets/LRW/visual_data
 python main.py --modality video \
