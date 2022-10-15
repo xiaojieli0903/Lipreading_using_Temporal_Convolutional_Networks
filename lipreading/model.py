@@ -292,7 +292,8 @@ class Lipreading(nn.Module):
                 elif self.memory_type == 'mvm':
                     self.memory = Memory(radius=memory_options['radius'],
                                          n_slot=memory_options['slot'],
-                                         n_head=memory_options['head'])
+                                         n_head=memory_options['head'],
+                                         fix_memory=memory_options['fix_memory'])
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
 
@@ -386,11 +387,10 @@ class Lipreading(nn.Module):
                     ], 0)
                 else:
                     raise NotImplementedError(f'predict_type {self.predict_type} is not supported.')
-
+                target_recon_loss = contrastive_loss = None
                 if not self.use_memory:
                     feature_predict = self.network_pred(feature_context)
                 else:
-                    target_recon_loss = contrastive_loss = None
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W

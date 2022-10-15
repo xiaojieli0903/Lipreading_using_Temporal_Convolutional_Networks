@@ -9,12 +9,14 @@ class Memory(nn.Module):
                  n_slot=112,
                  n_head=8,
                  dim=512,
-                 diff_key_value=False):
+                 diff_key_value=False,
+                 fix_memory=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
         self.n_head = n_head
         self.n_slot = n_slot
+        self.fix_memory = fix_memory
 
         self.key = nn.Parameter(torch.Tensor(int(n_head * n_slot),
                                              int(512 / n_head)),
@@ -62,7 +64,10 @@ class Memory(nn.Module):
         m_head_aud = m_head_aud.view(B * S, -1)  # BS, n_head*512
         attention_output = self.norm2(self.out_proj(m_head_aud))  # BS, 512
 
-        f_predict = self.dropout(self.norm1(query + attention_output.view(B, S, -1)))
+        if self.fix_memory:
+            f_predict = attention_output.view(B, S, -1)
+        else:
+            f_predict = self.dropout(self.norm1(query + attention_output.view(B, S, -1)))
 
         # Update
         if not inference:
@@ -84,7 +89,9 @@ class Memory(nn.Module):
                 attention_recon = self.v_up(attention_recon)
 
             attention_recon = self.norm3(attention_recon)
-            f_target_recon = self.norm1(query + attention_recon.view(B, S, -1))
-            f_target_recon = self.dropout(f_target_recon)
+            if self.fix_memory:
+                f_target_recon = attention_recon.view(B, S, -1)
+            else:
+                f_target_recon = self.dropout(self.norm1(query + attention_recon.view(B, S, -1)))
 
         return f_predict, f_target_recon, recon_loss, contrastive_loss

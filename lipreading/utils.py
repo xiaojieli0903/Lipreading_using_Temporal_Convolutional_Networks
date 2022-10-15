@@ -190,9 +190,10 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False, disc
 
 # -- logging utils
 def get_logger(args, save_path):
-    log_path = '{}/{}_{}_{}classes_log.txt'.format(save_path,
-                                                   args.training_mode, args.lr,
-                                                   args.num_classes)
+    log_path = '{}/{}_{}_{}classes_{}_log.txt'.format(save_path,
+                                                      args.training_mode, args.lr,
+                                                      args.num_classes,
+                                                      args.time_info)
     logger = logging.getLogger("mylog")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(
@@ -236,7 +237,7 @@ def get_save_folder(args):
     save_path = '{}/{}/{}'.format(
         args.logging_dir, args.training_mode,
         args.config_path.split('/')[-1].replace('.json', '') + args.exp_name)
-    save_path += '/' + datetime.datetime.now().isoformat().split('.')[0]
+    time_info = datetime.datetime.now().isoformat().split('.')[0].replace(':', '_')
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
-    return save_path
+    return save_path, time_info
