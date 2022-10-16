@@ -539,8 +539,8 @@ def get_model_from_json():
     args.use_memory = args_loaded.get("use_memory", False)
     args.membanks_size = args_loaded.get("membanks_size", 1024)
     args.predict_residual = args_loaded.get("predict_residual", False)
-    args.predict_type = args_loaded.get("predict_type", 0)
-    args.block_size = args_loaded.get("block_size", 4)
+    args.predict_type = args_loaded.get("predict_type", 1)
+    args.block_size = args_loaded.get("block_size", 5)
     args.memory_type = args_loaded.get('memory_type', 'memdpc')
     args.memory_options = args_loaded.get(
         "memory_options", {
