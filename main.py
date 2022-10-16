@@ -532,10 +532,12 @@ def get_model_from_json():
         'radius': 16,
         'slot': 112,
         'head': 8,
-        'fix_memory': args_loaded.get('fix_memory', False)
+        'fix_memory': args_loaded.get('fix_memory', False),
+        'no_norm': args_loaded.get('no_norm', False),
     })
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_context = args_loaded.get('choose_by_context', False)
+    args.no_norm = args_loaded.get('no_norm', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -582,7 +584,7 @@ def get_model_from_json():
                        use_gan=args.use_gan,
                        output_layer=args.output_layer,
                        skip_number=args.skip_number,
-                       choose_by_context=args.choose_by_context
+                       choose_by_context=args.choose_by_context,
                        ).cuda()
     calculateNorm2(model)
     return model

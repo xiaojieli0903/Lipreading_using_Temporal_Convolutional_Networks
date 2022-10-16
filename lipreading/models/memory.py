@@ -11,7 +11,8 @@ class Memory(nn.Module):
                  dim=512,
                  diff_key_value=False,
                  fix_memory=False,
-                 choose_by_context=False):
+                 choose_by_context=False,
+                 no_norm=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -19,6 +20,7 @@ class Memory(nn.Module):
         self.n_slot = n_slot
         self.fix_memory = fix_memory
         self.choose_by_context = choose_by_context
+        self.no_norm = no_norm
 
         self.key = nn.Parameter(torch.Tensor(int(n_head * n_slot),
                                              int(512 / n_head)),
@@ -80,7 +82,10 @@ class Memory(nn.Module):
             attention_output = torch.einsum('bh, bhd->bd', hypothesis_address, m_head_out)  # BS, head_dim
         else:
             m_head_out = m_head_out.view(B * S, -1)  # BS, n_head*512
-            attention_output = self.norm2(self.out_proj(m_head_out))  # BS, 512
+            if self.no_norm:
+                attention_output = self.norm2(self.out_proj(m_head_out))  # BS, 512
+            else:
+                attention_output = self.out_proj(m_head_out)  # BS, 512
 
         if self.fix_memory:
             f_predict = attention_output.view(B, S, -1)
