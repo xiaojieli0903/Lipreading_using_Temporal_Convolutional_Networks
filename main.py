@@ -43,7 +43,7 @@ def load_args(default_config=None):
                         help='choose the modality')
     # -- directory
     parser.add_argument('--data-dir',
-                        default='./datasets/LRW/visual_data',
+                        default='./datasets/visual_data',
                         help='Loaded data directory')
     parser.add_argument('--label-path',
                         type=str,
