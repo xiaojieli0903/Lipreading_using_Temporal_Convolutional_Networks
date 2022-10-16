@@ -147,7 +147,11 @@ class CheckpointSaver:
         self.best_for_stage = ckpt_dict.get('best_prec_per_stage', None)
 
 
-def load_model(load_path, model, optimizer=None, allow_size_mismatch=False, discriminator_flag=False):
+def load_model(load_path,
+               model,
+               optimizer=None,
+               allow_size_mismatch=False,
+               discriminator_flag=False):
     """
     Load model from file
     If optimizer is passed, then the loaded dictionary is expected to contain also the states of the optimizer.
@@ -191,7 +195,8 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False, disc
 # -- logging utils
 def get_logger(args, save_path):
     log_path = '{}/{}_{}_{}classes_{}_log.txt'.format(save_path,
-                                                      args.training_mode, args.lr,
+                                                      args.training_mode,
+                                                      args.lr,
                                                       args.num_classes,
                                                       args.time_info)
     logger = logging.getLogger("mylog")
@@ -237,7 +242,8 @@ def get_save_folder(args):
     save_path = '{}/{}/{}'.format(
         args.logging_dir, args.training_mode,
         args.config_path.split('/')[-1].replace('.json', '') + args.exp_name)
-    time_info = datetime.datetime.now().isoformat().split('.')[0].replace(':', '_')
+    time_info = datetime.datetime.now().isoformat().split('.')[0].replace(
+        ':', '_')
     if not os.path.isdir(save_path):
         os.makedirs(save_path)
     return save_path, time_info

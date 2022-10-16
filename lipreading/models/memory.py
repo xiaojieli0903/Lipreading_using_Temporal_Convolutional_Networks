@@ -57,56 +57,79 @@ class Memory(nn.Module):
         self.softmax1 = nn.Softmax(2)
         self.softmax2 = nn.Softmax(1)
 
-    def forward(self, query, value=None, f_exclude_predicts=None, inference=False):
+    def forward(self,
+                query,
+                value=None,
+                f_exclude_predicts=None,
+                inference=False):
         # B, S, 512
         B, S, C = query.size()
-        f_target_recon, recon_loss, contrastive_loss = None, torch.zeros(1).cuda(), torch.zeros(1).cuda()
+        f_target_recon, recon_loss, contrastive_loss = None, torch.zeros(
+            1).cuda(), torch.zeros(1).cuda()
 
-        key_normalized = F.normalize(self.key.view(self.n_head, self.n_slot, -1), dim=2)  # n_head, n_slot, head_dim
-        query_proj = self.q_proj_weight(query.view(B * S, -1))  # B*S, n_head * head_dim
-        query_proj = query_proj.view(B * S, self.n_head, -1)  # BS, n_head, head_dim
+        key_normalized = F.normalize(self.key.view(self.n_head, self.n_slot,
+                                                   -1),
+                                     dim=2)  # n_head, n_slot, head_dim
+        query_proj = self.q_proj_weight(query.view(
+            B * S, -1))  # B*S, n_head * head_dim
+        query_proj = query_proj.view(B * S, self.n_head,
+                                     -1)  # BS, n_head, head_dim
         query_proj = F.normalize(query_proj, dim=2)
 
-        key_sim = torch.einsum('bhd,hsd->bhs', query_proj, key_normalized)  # BS, n_head, n_slot
-        key_address = self.softmax1(self.radius * key_sim)  # BS, n_head, n_slot
+        key_sim = torch.einsum('bhd,hsd->bhs', query_proj,
+                               key_normalized)  # BS, n_head, n_slot
+        key_address = self.softmax1(self.radius *
+                                    key_sim)  # BS, n_head, n_slot
         # (BS, n_head, n_slot) * (n_slot , 512) --> BS, n_head, 512
         m_head_out = torch.matmul(key_address, self.value.detach())
 
         if self.choose_by_context:
-            m_head_out = m_head_out.view(B * S, self.n_head, -1)  # BS, n_head, head_dim
-            f_exclude_predicts_proj = self.context_proj_weight(f_exclude_predicts.detach()).view(B * S, -1)
-            f_exclude_predicts_norm = F.normalize(f_exclude_predicts_proj, dim=-1)  # BS, head_dim
-            context_hypothesis_sim = torch.einsum('bhd,bd->bh', F.normalize(m_head_out, dim=2), f_exclude_predicts_norm)
-            hypothesis_address = self.softmax2(self.radius * context_hypothesis_sim)  # BS , n_head
+            m_head_out = m_head_out.view(B * S, self.n_head,
+                                         -1)  # BS, n_head, head_dim
+            f_exclude_predicts_proj = self.context_proj_weight(
+                f_exclude_predicts.detach()).view(B * S, -1)
+            f_exclude_predicts_norm = F.normalize(f_exclude_predicts_proj,
+                                                  dim=-1)  # BS, head_dim
+            context_hypothesis_sim = torch.einsum(
+                'bhd,bd->bh', F.normalize(m_head_out, dim=2),
+                f_exclude_predicts_norm)
+            hypothesis_address = self.softmax2(
+                self.radius * context_hypothesis_sim)  # BS , n_head
             # (BS , n_head) * (BS, n_head, head_dim)
-            attention_output = torch.einsum('bh, bhd->bd', hypothesis_address, m_head_out)  # BS, head_dim
+            attention_output = torch.einsum('bh, bhd->bd', hypothesis_address,
+                                            m_head_out)  # BS, head_dim
         else:
             m_head_out = m_head_out.view(B * S, -1)  # BS, n_head*512
             if self.no_norm:
-                attention_output = self.norm2(self.out_proj(m_head_out))  # BS, 512
+                attention_output = self.norm2(
+                    self.out_proj(m_head_out))  # BS, 512
             else:
                 attention_output = self.out_proj(m_head_out)  # BS, 512
 
         if self.fix_memory:
             f_predict = attention_output.view(B, S, -1)
         else:
-            f_predict = self.dropout(self.norm1(query + attention_output.view(B, S, -1)))
+            f_predict = self.dropout(
+                self.norm1(query + attention_output.view(B, S, -1)))
 
         # Update
         if not inference:
             value = value.view(B * S, -1)  # BS,512
             value_proj = self.v_proj_weight(value.detach())
             value_norm = F.normalize(self.value, dim=1)  # n_slot,512
-            value_sim = F.linear(F.normalize(value_proj, dim=1), value_norm)  # BS, n_slot
+            value_sim = F.linear(F.normalize(value_proj, dim=1),
+                                 value_norm)  # BS, n_slot
             value_address = self.softmax2(self.radius * value_sim)
 
             attention_recon = torch.matmul(value_address, self.value)  # BS,512
 
             contrastive_loss = torch.abs(
                 torch.eye(self.n_slot).cuda() -
-                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum() * 0.01  # n_slot, n_slot
+                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum(
+                ) * 0.01  # n_slot, n_slot
 
-            recon_loss = torch.abs(1.0 - F.cosine_similarity(attention_recon, value.detach(), 1)).sum() / (B * S)
+            recon_loss = torch.abs(1.0 - F.cosine_similarity(
+                attention_recon, value.detach(), 1)).sum() / (B * S)
 
             if self.diff_key_value:
                 attention_recon = self.v_up(attention_recon)
@@ -115,6 +138,7 @@ class Memory(nn.Module):
             if self.fix_memory:
                 f_target_recon = attention_recon.view(B, S, -1)
             else:
-                f_target_recon = self.dropout(self.norm1(query + attention_recon.view(B, S, -1)))
+                f_target_recon = self.dropout(
+                    self.norm1(query + attention_recon.view(B, S, -1)))
 
         return f_predict, f_target_recon, recon_loss, contrastive_loss

@@ -9,12 +9,12 @@ import argparse
 import os
 import random
 import time
-import yaml
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import yaml
 from tqdm import tqdm
 
 from lipreading.dataloaders import (get_data_loaders,
@@ -304,7 +304,8 @@ def extract_feats(model, path_list):
             out_path,
             model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
                   lengths=[data.shape[0]],
-                  boundaries=torch.ones(data.shape[0]).cuda().reshape(1, data.shape[0], 1)).cpu().detach().numpy())
+                  boundaries=torch.ones(data.shape[0]).cuda().reshape(
+                      1, data.shape[0], 1)).cpu().detach().numpy())
 
 
 def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
@@ -374,7 +375,14 @@ def evaluate(model, dset_loader, criterion):
         dset_loader.dataset)
 
 
-def train(model, dset_loader, criterion, epoch, optimizer, logger, model_D=None, optimizer_D=None):
+def train(model,
+          dset_loader,
+          criterion,
+          epoch,
+          optimizer,
+          logger,
+          model_D=None,
+          optimizer_D=None):
     data_time = AverageMeter()
     batch_time = AverageMeter()
 
@@ -423,24 +431,30 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger, model_D=None,
                 loss_G = criterion(F.softmax(logits_G, dim=-1), labels_G)
                 loss_dict['loss_G'] = loss_G
                 loss_weight['loss_G'] = 0
-                _, predicted_G = torch.max(F.softmax(logits_G, dim=1).data, dim=1)
-                acc_G = predicted_G.eq(labels_G.view_as(predicted_G)).sum().item() / float(labels_G.shape[0])
+                _, predicted_G = torch.max(F.softmax(logits_G, dim=1).data,
+                                           dim=1)
+                acc_G = predicted_G.eq(
+                    labels_G.view_as(predicted_G)).sum().item() / float(
+                        labels_G.shape[0])
                 accuracy['loss_G'] = acc_G
                 if batch_idx > args.gan_start_iter:
-                    loss_weight['loss_G'] = args.gan_loss_weight 
+                    loss_weight['loss_G'] = args.gan_loss_weight
                     loss += args.gan_loss_weight * loss_G
 
-                logits_D = model_D(torch.cat((features_pos.detach(), features_neg.detach()), dim=0))
+                logits_D = model_D(
+                    torch.cat((features_pos.detach(), features_neg.detach()),
+                              dim=0))
                 labels_D = torch.cat((torch.ones(features_pos.shape[0]),
-                                      torch.zeros(features_neg.shape[0])), dim=0).cuda().long()
-                loss_D = criterion(
-                    F.softmax(logits_D, dim=-1),
-                    labels_D
-                )
+                                      torch.zeros(features_neg.shape[0])),
+                                     dim=0).cuda().long()
+                loss_D = criterion(F.softmax(logits_D, dim=-1), labels_D)
                 loss_dict['loss_D'] = loss_D
                 loss_weight['loss_D'] = 1
-                _, predicted_D = torch.max(F.softmax(logits_D, dim=1).data, dim=1)
-                acc_D = predicted_D.eq(labels_D.view_as(predicted_D)).sum().item() / float(labels_D.shape[0])
+                _, predicted_D = torch.max(F.softmax(logits_D, dim=1).data,
+                                           dim=1)
+                acc_D = predicted_D.eq(
+                    labels_D.view_as(predicted_D)).sum().item() / float(
+                        labels_D.shape[0])
                 accuracy['loss_D'] = acc_D
 
             if args.detach_target:
@@ -449,8 +463,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger, model_D=None,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict,
-                                              feature_target,
+                loss_predict = calculate_loss(feature_predict, feature_target,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             predict_loss_name = 'loss_' + args.predict_loss_type
@@ -489,14 +502,15 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger, model_D=None,
         end = time.time()
         # -- compute running performance
         _, predicted = torch.max(F.softmax(logits, dim=1).data, dim=1)
-        acc_cls = (lam * predicted.eq(labels_a.view_as(
-            predicted)).sum().item() + (1 - lam) * predicted.eq(
-            labels_b.view_as(predicted)).sum().item()) / float(predicted.shape[0])
+        acc_cls = (
+            lam * predicted.eq(labels_a.view_as(predicted)).sum().item() +
+            (1 - lam) * predicted.eq(labels_b.view_as(predicted)).sum().item()
+        ) / float(predicted.shape[0])
         accuracy['loss_KL'] = acc_cls
         running_loss += loss.item() * input.size(0)
         running_corrects += lam * predicted.eq(labels_a.view_as(
             predicted)).sum().item() + (1 - lam) * predicted.eq(
-            labels_b.view_as(predicted)).sum().item()
+                labels_b.view_as(predicted)).sum().item()
         running_all += input.size(0)
         # -- log intermediate results
         if batch_idx % args.interval == 0 or (batch_idx
@@ -528,13 +542,14 @@ def get_model_from_json():
     args.predict_type = args_loaded.get("predict_type", 0)
     args.block_size = args_loaded.get("block_size", 4)
     args.memory_type = args_loaded.get('memory_type', 'memdpc')
-    args.memory_options = args_loaded.get("memory_options", {
-        'radius': 16,
-        'slot': 112,
-        'head': 8,
-        'fix_memory': args_loaded.get('fix_memory', False),
-        'no_norm': args_loaded.get('no_norm', False),
-    })
+    args.memory_options = args_loaded.get(
+        "memory_options", {
+            'radius': 16,
+            'slot': 112,
+            'head': 8,
+            'fix_memory': args_loaded.get('fix_memory', False),
+            'no_norm': args_loaded.get('no_norm', False),
+        })
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_context = args_loaded.get('choose_by_context', False)
     args.no_norm = args_loaded.get('no_norm', False)
@@ -562,30 +577,31 @@ def get_model_from_json():
     else:
         densetcn_options = {}
 
-    model = Lipreading(modality=args.modality,
-                       num_classes=args.num_classes,
-                       tcn_options=tcn_options,
-                       densetcn_options=densetcn_options,
-                       backbone_type=args.backbone_type,
-                       relu_type=args.relu_type,
-                       width_mult=args.width_mult,
-                       use_boundary=args.use_boundary,
-                       extract_feats=args.extract_feats,
-                       linear_config=args.linear_config,
-                       predict_future=args.predict_future,
-                       frontend_type=args.frontend_type,
-                       use_memory=args.use_memory,
-                       membanks_size=args.membanks_size,
-                       predict_residual=args.predict_residual,
-                       predict_type=args.predict_type,
-                       block_size=args.block_size,
-                       memory_type=args.memory_type,
-                       memory_options=args.memory_options,
-                       use_gan=args.use_gan,
-                       output_layer=args.output_layer,
-                       skip_number=args.skip_number,
-                       choose_by_context=args.choose_by_context,
-                       ).cuda()
+    model = Lipreading(
+        modality=args.modality,
+        num_classes=args.num_classes,
+        tcn_options=tcn_options,
+        densetcn_options=densetcn_options,
+        backbone_type=args.backbone_type,
+        relu_type=args.relu_type,
+        width_mult=args.width_mult,
+        use_boundary=args.use_boundary,
+        extract_feats=args.extract_feats,
+        linear_config=args.linear_config,
+        predict_future=args.predict_future,
+        frontend_type=args.frontend_type,
+        use_memory=args.use_memory,
+        membanks_size=args.membanks_size,
+        predict_residual=args.predict_residual,
+        predict_type=args.predict_type,
+        block_size=args.block_size,
+        memory_type=args.memory_type,
+        memory_options=args.memory_options,
+        use_gan=args.use_gan,
+        output_layer=args.output_layer,
+        skip_number=args.skip_number,
+        choose_by_context=args.choose_by_context,
+    ).cuda()
     calculateNorm2(model)
     return model
 
@@ -611,7 +627,8 @@ def main():
     # -- get D model
     model_D = optimizer_D = None
     if args.use_gan:
-        model_D = Discriminator(512 * 3, feature_dim=512, dropout_rate=0.5).cuda()
+        model_D = Discriminator(512 * 3, feature_dim=512,
+                                dropout_rate=0.5).cuda()
         optimizer_D = get_optimizer(args, optim_policies=model_D.parameters())
         calculateNorm2(model_D)
     logger.info(model)
@@ -631,8 +648,10 @@ def main():
                 f'Model and states have been successfully loaded from {args.model_path}'
             )
             if args.use_gan:
-                model_D, optimizer_D = load_model(
-                    args.model_path, model_D, optimizer, discriminator_flag=True)
+                model_D, optimizer_D = load_model(args.model_path,
+                                                  model_D,
+                                                  optimizer,
+                                                  discriminator_flag=True)
                 logger.info(
                     f'Discriminator Model and states have been successfully loaded from {args.model_path}'
                 )
@@ -645,14 +664,19 @@ def main():
                 f'Model has been successfully loaded from {args.model_path}')
             if args.use_gan:
                 model_D = load_model(
-                    args.model_path, model_D, allow_size_mismatch=args.allow_size_mismatch, discriminator_flag=True)
+                    args.model_path,
+                    model_D,
+                    allow_size_mismatch=args.allow_size_mismatch,
+                    discriminator_flag=True)
                 logger.info(
                     f'Discriminator Model has been successfully loaded from {args.model_path}'
                 )
         # feature extraction
         if args.mouth_patch_path:
             if args.mouth_embedding_out_path == '':
-                args.mouth_embedding_out_path = os.path.join(os.path.dirname(args.model_path), f'features_{args.output_layer}')
+                args.mouth_embedding_out_path = os.path.join(
+                    os.path.dirname(args.model_path),
+                    f'features_{args.output_layer}')
             extract_feats(model, args.mouth_patch_path)
             return
         # if test-time, performance on test partition and exit.
