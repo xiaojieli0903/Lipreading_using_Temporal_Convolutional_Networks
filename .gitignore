@@ -12,3 +12,4 @@ datasets/outputs
 */*/.ipynb*
 .ipynb*/*
 datasets/
+datasets/*
