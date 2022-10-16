@@ -192,7 +192,9 @@ class Lipreading(nn.Module):
                  memory_type='memdpc',
                  memory_options={},
                  use_gan=False,
-                 output_layer='backbone'
+                 output_layer='backbone',
+                 skip_number=1,
+                 choose_by_context=False
                  ):
         super(Lipreading, self).__init__()
         if linear_config is None:
@@ -212,6 +214,10 @@ class Lipreading(nn.Module):
         self.memory_type = memory_type
         self.use_gan = use_gan
         self.output_layer = output_layer
+        self.gather_func = _average_batch
+        self.skip_number = skip_number
+        self.choose_by_context = choose_by_context
+        print(self.skip_number, self.choose_by_context)
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -293,7 +299,8 @@ class Lipreading(nn.Module):
                     self.memory = Memory(radius=memory_options['radius'],
                                          n_slot=memory_options['slot'],
                                          n_head=memory_options['head'],
-                                         fix_memory=memory_options['fix_memory'])
+                                         fix_memory=memory_options['fix_memory'],
+                                         choose_by_context=self.choose_by_context)
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
 
@@ -344,31 +351,42 @@ class Lipreading(nn.Module):
             x = x.view(B, Tnew, x.size(1))
             dim_frame = x.shape[-1]
             if self.predict_future > 0:
-                feature_context = feature_target = features_pos = features_neg = None
+                feature_context = feature_target = features_pos = features_neg = feature_exclude_predicts = None
                 predict_times = None
+                # generate the context features and target features
                 if self.predict_type == 1:
-                    time_chunks = torch.split(x, self.block_size, dim=1)
-                    stride = 1
+                    time_chunks = torch.split(x, self.block_size, dim=1)[:-1]
+                    skip_number = self.skip_number
                     context_num = 2
-                    predict_times = len(time_chunks) - context_num
-                    for i in range(0, predict_times, stride):
-                        # print(i, predict_times, len(time_chunks))
+                    predict_times = len(time_chunks) - context_num - skip_number + 1
+                    for i in range(0, predict_times):
                         if feature_context is None:
-                            feature_context = _average_batch(
-                                torch.cat(time_chunks[i:i + context_num], 1),
-                                                             average_dim=1)
-                            feature_target = _average_batch(time_chunks[i + context_num])
+                            feature_context = self.gather_func(
+                                torch.cat(time_chunks[i: i + context_num], 1), average_dim=1)
+                            feature_target = self.gather_func(time_chunks[i + context_num + skip_number - 1])
+                            if self.choose_by_context:
+                                feature_exclude_predicts = self.gather_func(
+                                    torch.cat(time_chunks[:i + context_num] +
+                                              time_chunks[(i + context_num + skip_number):], 1),
+                                    average_dim=1)
                         else:
-                            feature_context = torch.cat((_average_batch(
-                                torch.cat(time_chunks[i:i + context_num], 1),
-                                average_dim=1), feature_context),
-                                                        dim=0)
-                            feature_target = torch.cat((_average_batch(
-                                time_chunks[i + context_num],
-                                average_dim=1), feature_target),
-                                                       dim=0)
+                            feature_context = torch.cat((self.gather_func(
+                                torch.cat(time_chunks[i: i + context_num], 1), average_dim=1),
+                                                         feature_context),
+                                dim=0)
+                            feature_target = torch.cat((self.gather_func(
+                                time_chunks[i + context_num + skip_number - 1], average_dim=1),
+                                                        feature_target),
+                                dim=0)
+                            if self.choose_by_context:
+                                feature_exclude_predicts = torch.cat((self.gather_func(
+                                    torch.cat(time_chunks[:i + context_num] +
+                                              time_chunks[(i + context_num + skip_number):], 1), average_dim=1),
+                                                           feature_exclude_predicts),
+                                    dim=0)
+
                         if self.use_gan and i != (predict_times - 1):
-                            features_block = [_average_batch(
+                            features_block = [self.gather_func(
                                 time_chunks[idx]).view(B, -1, dim_frame) for idx in range(i, i + context_num + 1)]
                             if features_pos is None:
                                 # batch * 3 * dim
@@ -377,16 +395,18 @@ class Lipreading(nn.Module):
                                 # (batch * predict_times) * 3 * dim
                                 features_pos = torch.cat((torch.cat(features_block, dim=1), features_pos), dim=0)
                 elif self.predict_type == 0:
-                    # batch * x.size(1)
-                    context_lengths = [_ // 2 for _ in lengths]
-                    feature_context = _average_batch(x.transpose(1, 2),
-                                                     context_lengths, B)
-                    feature_target = torch.stack([
-                        x[index, int(length * 0.75), :]
-                        for index, length in enumerate(lengths)
-                    ], 0)
+                    # # batch * x.size(1)
+                    # context_lengths = [_ // 2 for _ in lengths]
+                    # feature_context = self.gather_func(x.transpose(1, 2),
+                    #                                  context_lengths, B)
+                    # feature_target = torch.stack([
+                    #     x[index, int(length * 0.75), :]
+                    #     for index, length in enumerate(lengths)
+                    # ], 0)
+                    pass
                 else:
                     raise NotImplementedError(f'predict_type {self.predict_type} is not supported.')
+
                 target_recon_loss = contrastive_loss = None
                 if not self.use_memory:
                     feature_predict = self.network_pred(feature_context)
@@ -394,16 +414,15 @@ class Lipreading(nn.Module):
                     if self.memory_type == 'memdpc':
                         predict_logits = self.network_pred(feature_context)
                         scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                        feature_predict = torch.einsum('bm,mc->bc', scores,
-                                                       self.membanks)
+                        feature_predict = torch.einsum('bm,mc->bc', scores, self.membanks)
                     else:
-                        # input query, recon_target
                         feature_predict, feature_target_recon, target_recon_loss, contrastive_loss = self.memory(
-                            feature_context.view(-1, 1,
-                                                 dim_frame),
+                            feature_context.view(-1, 1, dim_frame),
                             feature_target.view(-1, 1, dim_frame),
+                            feature_exclude_predicts.view(-1, 1, dim_frame) if feature_exclude_predicts is not None else None,
                             inference=False)
                         feature_predict = feature_predict.view(-1, dim_frame)
+
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict
                 if self.use_gan:

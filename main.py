@@ -534,6 +534,8 @@ def get_model_from_json():
         'head': 8,
         'fix_memory': args_loaded.get('fix_memory', False)
     })
+    args.skip_number = args_loaded.get('skip_number', 1)
+    args.choose_by_context = args_loaded.get('choose_by_context', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -578,7 +580,9 @@ def get_model_from_json():
                        memory_type=args.memory_type,
                        memory_options=args.memory_options,
                        use_gan=args.use_gan,
-                       output_layer=args.output_layer
+                       output_layer=args.output_layer,
+                       skip_number=args.skip_number,
+                       choose_by_context=args.choose_by_context
                        ).cuda()
     calculateNorm2(model)
     return model
@@ -662,10 +666,10 @@ def main():
     # -- fix learning rate after loading the ckeckpoint (latency)
     if args.model_path and args.init_epoch > 0:
         scheduler.adjust_lr(optimizer, args.init_epoch - 1)
-    args_save_path = f'{ckpt_saver.save_dir}/config.yaml'
-    yaml_file = open(args_save_path, 'w')
-    yaml.dump(vars(args), json_file, indent=6)
-    yaml_file.close()
+    args_save_path = f'{ckpt_saver.save_dir}/config_{time_info}.yaml'
+    config_file = open(args_save_path, 'w')
+    yaml.dump(vars(args), config_file, indent=6)
+    config_file.close()
     logger.info(f'Saving the configs to {args_save_path}')
     epoch = args.init_epoch
     while epoch < args.epochs:
