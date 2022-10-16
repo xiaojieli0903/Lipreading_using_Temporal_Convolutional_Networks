@@ -302,6 +302,7 @@ class Lipreading(nn.Module):
                         n_slot=memory_options['slot'],
                         n_head=memory_options['head'],
                         fix_memory=memory_options['fix_memory'],
+                        no_norm=memory_options['no_norm'],
                         choose_by_context=self.choose_by_context)
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
