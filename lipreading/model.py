@@ -187,8 +187,8 @@ class Lipreading(nn.Module):
                  use_memory=False,
                  membanks_size=1024,
                  predict_residual=False,
-                 predict_type=0,
-                 block_size=4,
+                 predict_type=1,
+                 block_size=5,
                  memory_type='memdpc',
                  memory_options={},
                  use_gan=False,
@@ -302,6 +302,7 @@ class Lipreading(nn.Module):
                         n_slot=memory_options['slot'],
                         n_head=memory_options['head'],
                         fix_memory=memory_options['fix_memory'],
+                        no_norm=memory_options['no_norm'],
                         choose_by_context=self.choose_by_context)
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
