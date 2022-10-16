@@ -9,12 +9,12 @@ import argparse
 import os
 import random
 import time
-import yaml
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import yaml
 from tqdm import tqdm
 
 from lipreading.dataloaders import (get_data_loaders,
@@ -43,14 +43,14 @@ def load_args(default_config=None):
                         help='choose the modality')
     # -- directory
     parser.add_argument('--data-dir',
-                        default='./datasets/LRW_h96w96_mouth_crop_gray',
+                        default='./datasets/LRW/visual_data',
                         help='Loaded data directory')
     parser.add_argument('--label-path',
                         type=str,
                         default='./labels/500WordsSortedList.txt',
                         help='Path to txt file with labels')
     parser.add_argument('--annonation-direc',
-                        default=None,
+                        default='./datasets/lipread_mp4/',
                         help='Loaded data directory')
     # -- model config
     parser.add_argument('--backbone-type',
