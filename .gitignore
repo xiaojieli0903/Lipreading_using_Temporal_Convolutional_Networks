@@ -6,5 +6,5 @@ __pycache__/
 *.pyc
 *.tar
 *.pth
-datasets/outputs
+datasets/
 .DS_Store
