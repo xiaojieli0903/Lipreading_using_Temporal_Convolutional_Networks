@@ -7,7 +7,6 @@ import pickle
 # Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 import cv2
 import numpy as np
-
 from transform import *
 from utils import *
 

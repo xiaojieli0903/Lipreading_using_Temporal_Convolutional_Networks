@@ -1,10 +1,11 @@
-import torch
 import os
-
 import sys
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn
+import torch
+
 model_path = sys.argv[1]
 key = sys.argv[2]
 
