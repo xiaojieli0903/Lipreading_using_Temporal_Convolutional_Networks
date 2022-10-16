@@ -7,4 +7,5 @@ __pycache__/
 *.tar
 *.pth
 datasets/
+datasets/*
 .DS_Store
