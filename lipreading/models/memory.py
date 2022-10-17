@@ -12,7 +12,8 @@ class Memory(nn.Module):
                  diff_key_value=False,
                  fix_memory=False,
                  choose_by_context=False,
-                 no_norm=False):
+                 no_norm=False,
+                 use_hypotheses=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -21,6 +22,7 @@ class Memory(nn.Module):
         self.fix_memory = fix_memory
         self.choose_by_context = choose_by_context
         self.no_norm = no_norm
+        self.use_hypotheses = use_hypotheses
 
         self.key = nn.Parameter(torch.Tensor(int(n_head * n_slot),
                                              int(512 / n_head)),
@@ -42,6 +44,8 @@ class Memory(nn.Module):
         else:
             if self.choose_by_context:
                 self.context_proj_weight = nn.Linear(dim, 512)
+                if self.use_hypotheses:
+                    self.hypotheses_proj = nn.Linear(512 * n_head, 512)
             else:
                 self.out_proj = nn.Linear(512 * n_head, 512)
             self.norm1 = nn.LayerNorm(512)
@@ -64,8 +68,8 @@ class Memory(nn.Module):
                 inference=False):
         # B, S, 512
         B, S, C = query.size()
-        f_target_recon, recon_loss, contrastive_loss = None, torch.zeros(
-            1).cuda(), torch.zeros(1).cuda()
+        f_target_recon, recon_loss, contrastive_loss, hypothesis_output = None, torch.zeros(
+            1).cuda(), torch.zeros(1).cuda(), None
 
         key_normalized = F.normalize(self.key.view(self.n_head, self.n_slot,
                                                    -1),
@@ -98,6 +102,8 @@ class Memory(nn.Module):
             # (BS , n_head) * (BS, n_head, head_dim)
             attention_output = torch.einsum('bh, bhd->bd', hypothesis_address,
                                             m_head_out)  # BS, head_dim
+            if self.use_hypotheses:
+                hypothesis_output = self.hypotheses_proj(m_head_out.view(B * S, -1))
         else:
             m_head_out = m_head_out.view(B * S, -1)  # BS, n_head*512
             if self.no_norm:
@@ -141,4 +147,4 @@ class Memory(nn.Module):
                 f_target_recon = self.dropout(
                     self.norm1(query + attention_recon.view(B, S, -1)))
 
-        return f_predict, f_target_recon, recon_loss, contrastive_loss
+        return f_predict, f_target_recon, recon_loss, contrastive_loss, hypothesis_output
