@@ -258,6 +258,6 @@ def get_save_folder(args):
         args.config_path.split('/')[-1].replace('.json', '') + args.exp_name)
     time_info = datetime.datetime.now().isoformat().split('.')[0].replace(
         ':', '_')
-    if not os.path.isdir(save_path):
+    if not os.path.exists(save_path):
         os.makedirs(save_path)
     return save_path, time_info
