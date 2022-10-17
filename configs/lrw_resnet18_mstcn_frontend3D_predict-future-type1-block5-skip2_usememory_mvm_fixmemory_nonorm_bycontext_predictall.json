@@ -15,8 +15,11 @@
     "predict_future": 1,
     "use_memory": true,
     "predict_type": 1,
-    "block_size": 7,
+    "block_size": 5,
     "memory_type": "mvm",
     "fix_memory": true,
-    "choose_by_context": true
+    "skip_number": 2,
+    "no_norm": true,
+    "choose_by_context": true,
+    "predict_all": true
 }

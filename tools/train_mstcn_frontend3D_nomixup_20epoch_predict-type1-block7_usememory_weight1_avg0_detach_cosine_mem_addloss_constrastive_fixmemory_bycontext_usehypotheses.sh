@@ -1,4 +1,4 @@
-MODEL_JSON_PATH=configs/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block7_usememory_mvm_fixmemory_bycontext.json
+MODEL_JSON_PATH=configs/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block7_usememory_mvm_fixmemory_bycontext_usehypotheses.json
 ANNONATION_DIRECTORY=./datasets/lipread_mp4/
 MOUTH_ROIS_DIRECTORY=./datasets/visual_data
 CUDA_VISIBLE_DEVICES=2 python main.py --modality video \
@@ -7,6 +7,5 @@ CUDA_VISIBLE_DEVICES=2 python main.py --modality video \
                                       --data-dir $MOUTH_ROIS_DIRECTORY \
 				      --alpha 0 --epochs 20  --predict-loss-weight 1 --loss-average-dim 0 \
 				      --exp-name _nomixup_20epochs_lw1_avg0_cosine_addloss_contrastive --detach-target \
-				      --predict-loss-type 'cosine' --add-memory-loss \
-				      --model-path /home/gao2/Lipreading_using_Temporal_Convolutional_Networks/train_logs/tcn/lrw_resnet18_mstcn_frontend3D_predict-future-type1-block7_usememory_mvm_fixmemory_bycontext_nomixup_20epochs_lw1_avg0_cosine_addloss_contrastive/ckpt.pth --init-epoch 1
+				      --predict-loss-type 'cosine' --add-memory-loss
 

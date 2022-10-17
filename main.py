@@ -549,9 +549,11 @@ def get_model_from_json():
             'head': args_loaded.get('head', 8),
             'fix_memory': args_loaded.get('fix_memory', False),
             'no_norm': args_loaded.get('no_norm', False),
+            'use_hypotheses': args_loaded.get('use_hypotheses', False),
         })
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_context = args_loaded.get('choose_by_context', False)
+    args.predict_all = args_loaded.get('predict_all', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -600,6 +602,7 @@ def get_model_from_json():
         output_layer=args.output_layer,
         skip_number=args.skip_number,
         choose_by_context=args.choose_by_context,
+        predict_all=args.predict_all
     ).cuda()
     calculateNorm2(model)
     return model
@@ -684,7 +687,7 @@ def main():
             acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                                    criterion)
             logger.info(
-                f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}"
+                f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc: {acc_avg_test:.4f}"
             )
             return
 
@@ -703,7 +706,7 @@ def main():
         acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
                                              criterion)
         logger.info(
-            f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
+            f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val: {acc_avg_val:.4f}, LR: {showLR(optimizer)}"
         )
         # -- save checkpoint
         save_dict = {
