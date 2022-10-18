@@ -230,21 +230,21 @@ def load_args(default_config=None):
     # loss average dim
     parser.add_argument('--loss-average-dim',
                         type=int,
-                        default=-1,
+                        default=-0,
                         help='the average dim of the L2 loss.')
     # detach target
     parser.add_argument('--detach-target',
-                        default=False,
+                        default=True,
                         action='store_true',
                         help='detach the target when calculate loss.')
     # predict loss type
     parser.add_argument('--predict-loss-type',
                         type=str,
-                        default='l2',
+                        default='cosine',
                         help='the type of the predict loss.')
     # add memory loss
     parser.add_argument('--add-memory-loss',
-                        default=False,
+                        default=True,
                         action='store_true',
                         help='whether add the memory loss from mvm.')
     # memory target reconstruction loss weight
@@ -255,7 +255,7 @@ def load_args(default_config=None):
     # memory slots difference loss weight
     parser.add_argument('--contrastive-loss-weight',
                         type=float,
-                        default=0.01,
+                        default=1,
                         help='the weight of the contrastive loss.')
     # use D
     parser.add_argument('--use-gan',
@@ -419,12 +419,15 @@ def train(model,
 
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
+        predict_times = 0
         if model.predict_future >= 0:
             logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
                 targets=labels_a)
+            if feature_predict is not None:
+                predict_times = feature_predict.shape[0] // logits.shape[0]
             if args.use_gan:
                 logits_G = model_D(features_neg)
                 labels_G = torch.ones(features_pos.shape[0]).cuda().long()
@@ -519,7 +522,7 @@ def train(model,
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 loss_weight, running_corrects, running_all, batch_time,
                 data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024, accuracy)
+                torch.cuda.max_memory_allocated() / 1024 / 1024, accuracy, predict_times)
 
     return model
 

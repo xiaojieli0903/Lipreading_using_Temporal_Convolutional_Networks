@@ -216,7 +216,7 @@ def get_logger(args, save_path):
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         loss_dict, loss_weight, running_corrects, running_all,
-                        batch_time, data_time, lr, mem, accuracy):
+                        batch_time, data_time, lr, mem, accuracy, predict_times):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     logger.info(
         f"[{batch_idx:5.0f}/{len(dset_loader):5.0f} | {running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)] | "
@@ -225,7 +225,7 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
         f"lr:{lr:.6f} | "
         f"Mem:{mem:.3f}M | "
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
-        f"Instances per second: {args.batch_size/batch_time.avg:.2f}")
+        f"Instances per second: {args.batch_size/batch_time.avg:.2f} | Predict_instances: {predict_times:5.0f}")
     for key in loss_dict:
         if key in accuracy.keys():
             logger.info(
