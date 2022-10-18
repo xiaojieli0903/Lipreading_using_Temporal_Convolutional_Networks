@@ -491,8 +491,12 @@ def train(model,
         loss_dict['loss_KL'] = loss_KL
         loss_weight['loss_KL'] = args.cls_loss_weight
         loss += args.cls_loss_weight * loss_KL
-
         loss.backward()
+        # for key, param in model.named_parameters():
+        #     if param.grad is not None:
+        #         print(key, param.requires_grad, param.shape, torch.sum(param.grad))
+        #     else:
+        #         print(key, param.requires_grad, param.shape, param.grad)
         optimizer.step()
 
         if args.use_gan:
@@ -558,6 +562,7 @@ def get_model_from_json():
     args.choose_by_context = args_loaded.get('choose_by_context', False)
     args.predict_all = args_loaded.get('predict_all', False)
     args.detach_all = args_loaded.get('detach_all', False)
+    args.choose_max = args_loaded.get('choose_max', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -607,7 +612,8 @@ def get_model_from_json():
         skip_number=args.skip_number,
         choose_by_context=args.choose_by_context,
         predict_all=args.predict_all,
-        detach_all=args.detach_all
+        detach_all=args.detach_all,
+        choose_max=args.choose_max,
     ).cuda()
     calculateNorm2(model)
     return model

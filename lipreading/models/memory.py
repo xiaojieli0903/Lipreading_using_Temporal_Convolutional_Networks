@@ -13,7 +13,8 @@ class Memory(nn.Module):
                  fix_memory=False,
                  choose_by_context=False,
                  no_norm=False,
-                 use_hypotheses=False):
+                 use_hypotheses=False,
+                 choose_max=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -23,6 +24,7 @@ class Memory(nn.Module):
         self.choose_by_context = choose_by_context
         self.no_norm = no_norm
         self.use_hypotheses = use_hypotheses
+        self.choose_max = choose_max
 
         self.key = nn.Parameter(torch.Tensor(int(n_head * n_slot),
                                              int(512 / n_head)),
@@ -37,9 +39,10 @@ class Memory(nn.Module):
                 self.context_proj_weight = nn.Linear(dim, 512)
             else:
                 self.out_proj = nn.Linear(512 * n_head, dim)
-            self.norm1 = nn.LayerNorm(dim)
-            self.norm2 = nn.LayerNorm(dim)
-            self.norm3 = nn.LayerNorm(dim)
+            if not self.no_norm:
+                self.norm1 = nn.LayerNorm(dim)
+                self.norm2 = nn.LayerNorm(dim)
+                self.norm3 = nn.LayerNorm(dim)
             self.v_up = nn.Linear(512, dim)
         else:
             if self.choose_by_context:
@@ -48,9 +51,10 @@ class Memory(nn.Module):
                     self.hypotheses_proj = nn.Linear(512 * n_head, 512)
             else:
                 self.out_proj = nn.Linear(512 * n_head, 512)
-            self.norm1 = nn.LayerNorm(512)
-            self.norm2 = nn.LayerNorm(512)
-            self.norm3 = nn.LayerNorm(512)
+            if not self.no_norm:
+                self.norm1 = nn.LayerNorm(512)
+                self.norm2 = nn.LayerNorm(512)
+                self.norm3 = nn.LayerNorm(512)
 
         self.q_proj_weight = nn.Linear(dim, 512)
         self.v_proj_weight = nn.Linear(512, 512)
@@ -104,14 +108,17 @@ class Memory(nn.Module):
             # choose the max or sum?
             hypothesis_address = self.softmax2(
                 self.radius * context_hypothesis_sim)  # BS , n_head
-            # (BS , n_head) * (BS, n_head, head_dim)
-            attention_output = torch.einsum('bh, bhd->bd', hypothesis_address,
-                                            m_head_out)  # BS, head_dim
+            if self.choose_max:
+                attention_output = m_head_out[torch.max(hypothesis_address, dim=1)]
+            else:
+                # (BS , n_head) * (BS, n_head, head_dim)
+                attention_output = torch.einsum('bh, bhd->bd', hypothesis_address,
+                                                m_head_out)  # BS, head_dim
             if self.use_hypotheses:
                 hypothesis_output = self.hypotheses_proj(m_head_out.view(B * S, -1))
         else:
             m_head_out = m_head_out.view(B * S, -1)  # BS, n_head*512
-            if self.no_norm:
+            if not self.no_norm:
                 attention_output = self.norm2(
                     self.out_proj(m_head_out))  # BS, 512
             else:
@@ -145,7 +152,9 @@ class Memory(nn.Module):
             if self.diff_key_value:
                 attention_recon = self.v_up(attention_recon)
 
-            attention_recon = self.norm3(attention_recon)
+            if not self.no_norm:
+                attention_recon = self.norm3(attention_recon)
+
             if self.fix_memory:
                 f_target_recon = attention_recon.view(B, S, -1)
             else:

@@ -196,7 +196,8 @@ class Lipreading(nn.Module):
                  skip_number=1,
                  choose_by_context=False,
                  predict_all=False,
-                 detach_all=False
+                 detach_all=False,
+                 choose_max=False
                  ):
         super(Lipreading, self).__init__()
         if linear_config is None:
@@ -221,6 +222,7 @@ class Lipreading(nn.Module):
         self.choose_by_context = choose_by_context
         self.predict_all = predict_all
         self.detach_all = detach_all
+        self.choose_max = choose_max
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -308,7 +310,8 @@ class Lipreading(nn.Module):
                         fix_memory=memory_options['fix_memory'],
                         no_norm=memory_options['no_norm'],
                         choose_by_context=self.choose_by_context,
-                        use_hypotheses=memory_options['use_hypotheses']
+                        use_hypotheses=memory_options['use_hypotheses'],
+                        choose_max=self.choose_max
                     )
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
