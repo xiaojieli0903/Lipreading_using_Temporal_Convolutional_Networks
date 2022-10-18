@@ -196,6 +196,7 @@ class Lipreading(nn.Module):
                  skip_number=1,
                  choose_by_context=False,
                  predict_all=False,
+                 detach_all=False
                  ):
         super(Lipreading, self).__init__()
         if linear_config is None:
@@ -219,6 +220,7 @@ class Lipreading(nn.Module):
         self.skip_number = skip_number
         self.choose_by_context = choose_by_context
         self.predict_all = predict_all
+        self.detach_all = detach_all
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -368,7 +370,10 @@ class Lipreading(nn.Module):
                 context_num = 2
                 # generate the context features and target features
                 if self.predict_type == 1:
-                    time_chunks = torch.split(x, self.block_size, dim=1)[:-1]
+                    if self.detach_all:
+                        time_chunks = torch.split(x.detach(), self.block_size, dim=1)[:-1]
+                    else:
+                        time_chunks = torch.split(x, self.block_size, dim=1)[:-1]
                     if self.predict_all and self.skip_number > 1:
                         for skip_number in range(self.skip_number):
                             predict_times = len(
@@ -442,20 +447,20 @@ class Lipreading(nn.Module):
                                          feature_exclude_predicts),
                                         dim=0)
 
-                        if self.use_gan and i != (predict_times - 1):
-                            features_block = [
-                                self.gather_func(time_chunks[idx]).view(
-                                    B, -1, dim_frame)
-                                for idx in range(i, i + context_num + 1)
-                            ]
-                            if features_pos is None:
-                                # batch * 3 * dim
-                                features_pos = torch.cat(features_block, dim=1)
-                            else:
-                                # (batch * predict_times) * 3 * dim
-                                features_pos = torch.cat((torch.cat(
-                                    features_block, dim=1), features_pos),
-                                                         dim=0)
+                            if self.use_gan and i != (predict_times - 1):
+                                features_block = [
+                                    self.gather_func(time_chunks[idx]).view(
+                                        B, -1, dim_frame)
+                                    for idx in range(i, i + context_num + 1)
+                                ]
+                                if features_pos is None:
+                                    # batch * 3 * dim
+                                    features_pos = torch.cat(features_block, dim=1)
+                                else:
+                                    # (batch * predict_times) * 3 * dim
+                                    features_pos = torch.cat((torch.cat(
+                                        features_block, dim=1), features_pos),
+                                                             dim=0)
                 elif self.predict_type == 0:
                     # # batch * x.size(1)
                     # context_lengths = [_ // 2 for _ in lengths]
