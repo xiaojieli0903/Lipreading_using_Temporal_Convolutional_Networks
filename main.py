@@ -232,7 +232,7 @@ def load_args(default_config=None):
                         type=int,
                         default=-0,
                         help='the average dim of the L2 loss.')
-    # detach target
+    # detach predict
     parser.add_argument('--detach-target',
                         default=True,
                         action='store_true',
@@ -557,6 +557,7 @@ def get_model_from_json():
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_context = args_loaded.get('choose_by_context', False)
     args.predict_all = args_loaded.get('predict_all', False)
+    args.detach_all = args_loaded.get('detach_all', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -605,7 +606,8 @@ def get_model_from_json():
         output_layer=args.output_layer,
         skip_number=args.skip_number,
         choose_by_context=args.choose_by_context,
-        predict_all=args.predict_all
+        predict_all=args.predict_all,
+        detach_all=args.detach_all
     ).cuda()
     calculateNorm2(model)
     return model
