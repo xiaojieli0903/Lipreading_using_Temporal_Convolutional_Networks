@@ -255,7 +255,7 @@ def load_args(default_config=None):
     # memory slots difference loss weight
     parser.add_argument('--contrastive-loss-weight',
                         type=float,
-                        default=1,
+                        default=0.01,
                         help='the weight of the contrastive loss.')
     # use D
     parser.add_argument('--use-gan',
