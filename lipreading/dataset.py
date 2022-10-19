@@ -164,7 +164,10 @@ class MyDataset(Dataset):
         return boundary
 
     def __getitem__(self, idx):
-        raw_data = self.load_data(self.list[idx][0])
+        try:
+            raw_data = self.load_data(self.list[idx][0])
+        except:
+            print(self.list[idx][0])
         # -- perform variable length on training set
         if (self._data_partition
                 == 'train') and self.is_var_length and not self.use_boundary:

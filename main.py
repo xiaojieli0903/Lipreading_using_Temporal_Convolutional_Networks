@@ -356,7 +356,6 @@ def evaluate(model, dset_loader, criterion):
             loss = criterion(logits, labels.cuda())
             running_loss += loss.item() * input.size(0)
     logits = preds = input = labels = None
-
     print(
         f"{len(dset_loader.dataset)} in total\tCR: {running_corrects/len(dset_loader.dataset)}"
     )

@@ -51,6 +51,8 @@ lines = lines[args.id:args.id + 500000]
 error_list = open('error.txt', 'a+')
 for filename_idx, line in enumerate(lines):
     filename, person_id = line.split(',')
+    if filename.find('FURTHER_00037') < 0:
+        continue
 
     video_filename = os.path.join(args.video_direc, filename + '.mp4')
     landmarks_filename = os.path.join(args.landmark_direc, filename + '.pkl')
