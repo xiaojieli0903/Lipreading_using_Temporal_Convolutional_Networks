@@ -17,12 +17,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mmcv.runner import get_dist_info, init_dist
 from torch.nn.parallel.distributed import DistributedDataParallel
+import yaml
 from tqdm import tqdm
 
 from lipreading.dataloaders import (get_data_loaders,
                                     get_preprocessing_pipelines)
 from lipreading.mixup import mixup_criterion, mixup_data
 from lipreading.model import Lipreading
+from lipreading.models.discriminator import Discriminator
 from lipreading.optim_utils import CosineScheduler, get_optimizer
 from lipreading.utils import (AverageMeter, CheckpointSaver, DataPrefetcher,
                               calculateNorm2, get_logger, get_save_folder,
@@ -48,14 +50,14 @@ def load_args(default_config=None):
                         help='choose the modality')
     # -- directory
     parser.add_argument('--data-dir',
-                        default='./datasets/LRW_h96w96_mouth_crop_gray',
+                        default='./datasets/visual_data',
                         help='Loaded data directory')
     parser.add_argument('--label-path',
                         type=str,
                         default='./labels/500WordsSortedList.txt',
                         help='Path to txt file with labels')
     parser.add_argument('--annonation-direc',
-                        default=None,
+                        default='./datasets/lipread_mp4/',
                         help='Loaded data directory')
     # -- model config
     parser.add_argument('--backbone-type',
@@ -176,6 +178,11 @@ def load_args(default_config=None):
                         default=False,
                         action='store_true',
                         help='Feature extractor')
+    # -- feature extract layer
+    parser.add_argument('--output-layer',
+                        default='backbone',
+                        help='Feature extractor layer')
+
     parser.add_argument(
         '--mouth-patch-path',
         type=str,
@@ -184,7 +191,7 @@ def load_args(default_config=None):
     )
     parser.add_argument('--mouth-embedding-out-path',
                         type=str,
-                        default=None,
+                        default='',
                         help='Save mouth embeddings to a specificed path')
     # -- json pathname
     parser.add_argument('--config-path',
@@ -240,21 +247,21 @@ def load_args(default_config=None):
     # loss average dim
     parser.add_argument('--loss-average-dim',
                         type=int,
-                        default=-1,
+                        default=-0,
                         help='the average dim of the L2 loss.')
-    # detach target
+    # detach predict
     parser.add_argument('--detach-target',
-                        default=False,
+                        default=True,
                         action='store_true',
                         help='detach the target when calculate loss.')
     # predict loss type
     parser.add_argument('--predict-loss-type',
                         type=str,
-                        default='l2',
+                        default='cosine',
                         help='the type of the predict loss.')
     # add memory loss
     parser.add_argument('--add-memory-loss',
-                        default=False,
+                        default=True,
                         action='store_true',
                         help='whether add the memory loss from mvm.')
     # memory target reconstruction loss weight
@@ -265,8 +272,23 @@ def load_args(default_config=None):
     # memory slots difference loss weight
     parser.add_argument('--contrastive-loss-weight',
                         type=float,
-                        default=0.01,
+                        default=1,
                         help='the weight of the contrastive loss.')
+    # use D
+    parser.add_argument('--use-gan',
+                        default=False,
+                        action='store_true',
+                        help='whether use D.')
+    # D loss weight
+    parser.add_argument('--gan-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the D loss.')
+    # gan start iter
+    parser.add_argument('--gan-start-iter',
+                        type=int,
+                        default=20000,
+                        help='the start iter of the gan loss.')
     args = parser.parse_args()
     return args
 
@@ -293,7 +315,9 @@ def extract_feats(model, path_list):
         save2npz(
             out_path,
             model(torch.FloatTensor(data)[None, None, :, :, :].cuda(),
-                  lengths=[data.shape[0]]).cpu().detach().numpy())
+                  lengths=[data.shape[0]],
+                  boundaries=torch.ones(data.shape[0]).cuda().reshape(
+                      1, data.shape[0], 1)).cpu().detach().numpy())
 
 
 def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
@@ -326,7 +350,6 @@ def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
 
 
 def evaluate(model, dset_loader, criterion):
-
     model.eval()
 
     running_loss = 0.
@@ -341,7 +364,7 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.module.predict_future >= 0:
-                logits, feature_predict, feature_target, _, _= model(
+                logits, feature_predict, feature_target, _, _, _, _ = model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -357,15 +380,23 @@ def evaluate(model, dset_loader, criterion):
             running_loss += loss.item() * input.size(0)
     logits = preds = input = labels = None
     print(
-        f"{len(dset_loader.dataset)} in total\tCR: {running_corrects/len(dset_loader.dataset)}"
+        f"{len(dset_loader.dataset)} in total\tCR: {running_corrects / len(dset_loader.dataset)}"
     )
     return running_corrects / len(dset_loader.dataset), running_loss / len(
         dset_loader.dataset)
 
 
-def train(model, dset_loader, criterion, epoch, optimizer, logger):
+def train(model,
+          dset_loader,
+          criterion,
+          epoch,
+          optimizer,
+          logger,
+          model_D=None,
+          optimizer_D=None):
     dataset_num = len(dset_loader.dataset)
     dset_loader = iter(DataPrefetcher(dset_loader))
+
     data_time = AverageMeter()
     batch_time = AverageMeter()
 
@@ -381,6 +412,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
     running_all = 0.
     loss_dict = {}
     loss_weight = {}
+    accuracy = {}
 
     end = time.time()
     for batch_idx, data in enumerate(dset_loader):
@@ -401,12 +433,47 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
 
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
+        predict_times = 0
         if model.module.predict_future >= 0:
-            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss = model(
+            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
                 targets=labels_a)
+            if feature_predict is not None:
+                predict_times = feature_predict.shape[0] // logits.shape[0]
+            if args.use_gan:
+                logits_G = model_D(features_neg)
+                labels_G = torch.ones(features_pos.shape[0]).cuda().long()
+                loss_G = criterion(F.softmax(logits_G, dim=-1), labels_G)
+                loss_dict['loss_G'] = loss_G
+                loss_weight['loss_G'] = 0
+                _, predicted_G = torch.max(F.softmax(logits_G, dim=1).data,
+                                           dim=1)
+                acc_G = predicted_G.eq(
+                    labels_G.view_as(predicted_G)).sum().item() / float(
+                        labels_G.shape[0])
+                accuracy['loss_G'] = acc_G
+                if batch_idx > args.gan_start_iter:
+                    loss_weight['loss_G'] = args.gan_loss_weight
+                    loss += args.gan_loss_weight * loss_G
+
+                logits_D = model_D(
+                    torch.cat((features_pos.detach(), features_neg.detach()),
+                              dim=0))
+                labels_D = torch.cat((torch.ones(features_pos.shape[0]),
+                                      torch.zeros(features_neg.shape[0])),
+                                     dim=0).cuda().long()
+                loss_D = criterion(F.softmax(logits_D, dim=-1), labels_D)
+                loss_dict['loss_D'] = loss_D
+                loss_weight['loss_D'] = 1
+                _, predicted_D = torch.max(F.softmax(logits_D, dim=1).data,
+                                           dim=1)
+                acc_D = predicted_D.eq(
+                    labels_D.view_as(predicted_D)).sum().item() / float(
+                        labels_D.shape[0])
+                accuracy['loss_D'] = acc_D
+
             if args.detach_target:
                 loss_predict = calculate_loss(feature_predict,
                                               feature_target.detach(),
@@ -438,15 +505,29 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
         loss_dict['loss_KL'] = loss_KL
         loss_weight['loss_KL'] = args.cls_loss_weight
         loss += args.cls_loss_weight * loss_KL
-
         loss.backward()
+        # for key, param in model.named_parameters():
+        #     if param.grad is not None:
+        #         print(key, param.requires_grad, param.shape, torch.sum(param.grad))
+        #     else:
+        #         print(key, param.requires_grad, param.shape, param.grad)
         optimizer.step()
+
+        if args.use_gan:
+            optimizer_D.zero_grad()
+            loss_D.backward()
+            optimizer_D.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
         # -- compute running performance
         _, predicted = torch.max(F.softmax(logits, dim=1).data, dim=1)
+        acc_cls = (
+            lam * predicted.eq(labels_a.view_as(predicted)).sum().item() +
+            (1 - lam) * predicted.eq(labels_b.view_as(predicted)).sum().item()
+        ) / float(predicted.shape[0])
+        accuracy['loss_KL'] = acc_cls
         running_loss += loss.item() * input.size(0)
         running_corrects += lam * predicted.eq(labels_a.view_as(
             predicted)).sum().item() + (1 - lam) * predicted.eq(
@@ -460,7 +541,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 loss_weight, running_corrects, running_all, batch_time, data_time, lr,
                 torch.cuda.max_memory_allocated() / 1024 / 1024, global_iter,
-                dataset_num)
+                dataset_num, accuracy, predict_times)
 
     return model
 
@@ -480,14 +561,23 @@ def get_model_from_json():
     args.use_memory = args_loaded.get("use_memory", False)
     args.membanks_size = args_loaded.get("membanks_size", 1024)
     args.predict_residual = args_loaded.get("predict_residual", False)
-    args.predict_type = args_loaded.get("predict_type", 0)
-    args.block_size = args_loaded.get("block_size", 4)
+    args.predict_type = args_loaded.get("predict_type", 1)
+    args.block_size = args_loaded.get("block_size", 5)
     args.memory_type = args_loaded.get('memory_type', 'memdpc')
-    args.memory_options = args_loaded.get("memory_options", {
-        'radius': 16,
-        'slot': 112,
-        'head': 8
-    })
+    args.memory_options = args_loaded.get(
+        "memory_options", {
+            'radius': args_loaded.get('radius', 16),
+            'slot': args_loaded.get('slot', 112),
+            'head': args_loaded.get('head', 8),
+            'fix_memory': args_loaded.get('fix_memory', False),
+            'no_norm': args_loaded.get('no_norm', False),
+            'use_hypotheses': args_loaded.get('use_hypotheses', False),
+        })
+    args.skip_number = args_loaded.get('skip_number', 1)
+    args.choose_by_context = args_loaded.get('choose_by_context', False)
+    args.predict_all = args_loaded.get('predict_all', False)
+    args.detach_all = args_loaded.get('detach_all', False)
+    args.choose_max = args_loaded.get('choose_max', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -512,25 +602,34 @@ def get_model_from_json():
     else:
         densetcn_options = {}
 
-    model = Lipreading(modality=args.modality,
-                       num_classes=args.num_classes,
-                       tcn_options=tcn_options,
-                       densetcn_options=densetcn_options,
-                       backbone_type=args.backbone_type,
-                       relu_type=args.relu_type,
-                       width_mult=args.width_mult,
-                       use_boundary=args.use_boundary,
-                       extract_feats=args.extract_feats,
-                       linear_config=args.linear_config,
-                       predict_future=args.predict_future,
-                       frontend_type=args.frontend_type,
-                       use_memory=args.use_memory,
-                       membanks_size=args.membanks_size,
-                       predict_residual=args.predict_residual,
-                       predict_type=args.predict_type,
-                       block_size=args.block_size,
-                       memory_type=args.memory_type,
-                       memory_options=args.memory_options).cuda()
+    model = Lipreading(
+        modality=args.modality,
+        num_classes=args.num_classes,
+        tcn_options=tcn_options,
+        densetcn_options=densetcn_options,
+        backbone_type=args.backbone_type,
+        relu_type=args.relu_type,
+        width_mult=args.width_mult,
+        use_boundary=args.use_boundary,
+        extract_feats=args.extract_feats,
+        linear_config=args.linear_config,
+        predict_future=args.predict_future,
+        frontend_type=args.frontend_type,
+        use_memory=args.use_memory,
+        membanks_size=args.membanks_size,
+        predict_residual=args.predict_residual,
+        predict_type=args.predict_type,
+        block_size=args.block_size,
+        memory_type=args.memory_type,
+        memory_options=args.memory_options,
+        use_gan=args.use_gan,
+        output_layer=args.output_layer,
+        skip_number=args.skip_number,
+        choose_by_context=args.choose_by_context,
+        predict_all=args.predict_all,
+        detach_all=args.detach_all,
+        choose_max=args.choose_max,
+    ).cuda()
     calculateNorm2(model)
     return model
 
@@ -566,8 +665,10 @@ def main():
 
     # -- logging
     if args.rank == 0:
-        save_path = get_save_folder(args)
+        # -- logging
+        save_path, time_info = get_save_folder(args)
         print(f"Model and log being saved in: {save_path}")
+        args.time_info = time_info
         logger = get_logger(args, save_path)
         ckpt_saver = CheckpointSaver(save_path)
 
@@ -581,6 +682,16 @@ def main():
     optimizer = get_optimizer(args, optim_policies=model.parameters())
     # -- get learning rate scheduler
     scheduler = CosineScheduler(args.lr, args.epochs)
+    # -- get D model
+    model_D = optimizer_D = None
+    if args.use_gan:
+        model_D = Discriminator(512 * 3, feature_dim=512,
+                                dropout_rate=0.5).cuda()
+        optimizer_D = get_optimizer(args, optim_policies=model_D.parameters())
+        calculateNorm2(model_D)
+    logger.info(model)
+    if args.use_gan:
+        logger.info(model_D)
 
     # distributed model
     model = DistributedDataParallel(model,
@@ -595,13 +706,22 @@ def main():
         # resume from checkpoint
         if args.init_epoch > 0:
             model, optimizer, epoch_idx, ckpt_dict = load_model(
-                args.model_path, model, optimizer)
+                args.model_path, model, optimizer, allow_size_mismatch=args.allow_size_mismatch)
             args.init_epoch = epoch_idx
             if args.rank == 0:
                 ckpt_saver.set_best_from_ckpt(ckpt_dict)
                 logger.info(
                     f'Model and states have been successfully loaded from {args.model_path}'
-                )
+            if args.use_gan:
+                model_D, optimizer_D = load_model(args.model_path,
+                                                  model_D,
+                                                  optimizer,
+                                                  allow_size_mismatch=args.allow_size_mismatch,
+                                                  discriminator_flag=True)
+                if args.rank == 0:
+                    logger.info(
+                        f'Discriminator Model and states have been successfully loaded from {args.model_path}'
+                    )
         # init from trained model
         else:
             model = load_model(args.model_path,
@@ -610,11 +730,26 @@ def main():
             if args.rank == 0:
                 logger.info(
                     f'Model has been successfully loaded from {args.model_path}')
+               if args.use_gan:
+                   model_D = load_model(
+                       args.model_path,
+                       model_D,
+                       allow_size_mismatch=args.allow_size_mismatch,
+                       discriminator_flag=True)
+                   if args.rank == 0:
+                       logger.info(
+                           f'Discriminator Model has been successfully loaded from {args.model_path}'
+                       )
         # feature extraction
         if args.mouth_patch_path:
+            if args.mouth_embedding_out_path == '':
+                args.mouth_embedding_out_path = os.path.join(
+                    os.path.dirname(args.model_path),
+                    f'features_{args.output_layer}')
             extract_feats(model, args.mouth_patch_path)
             return
-        # if test-time, performance on test partition and exit. Otherwise, performance on validation and continue (sanity check for reload)
+        # if test-time, performance on test partition and exit.
+        # Otherwise, performance on validation and continue (sanity check for reload)
         if args.test:
             acc_avg_test, loss_avg_test = evaluate(model, dset_loaders['test'],
                                                    criterion)
@@ -627,18 +762,23 @@ def main():
     # -- fix learning rate after loading the ckeckpoint (latency)
     if args.model_path and args.init_epoch > 0:
         scheduler.adjust_lr(optimizer, args.init_epoch - 1)
-
+    args_save_path = f'{ckpt_saver.save_dir}/config_{time_info}.yaml'
+    config_file = open(args_save_path, 'w')
+    yaml.dump(vars(args), config_file, indent=6)
+    config_file.close()
+    logger.info(f'Saving the configs to {args_save_path}')
     epoch = args.init_epoch
     if args.rank == 0:
         logger.info(model)
 
     while epoch < args.epochs:
         model = train(model, dset_loaders['train'], criterion, epoch,
-                      optimizer, logger if args.rank == 0 else None)
+                      optimizer, logger if args.rank == 0 else None, model_D, optimizer_D)
         acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
                                              criterion)
         print(
             f"rank-{args.rank}-{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}"
+
         )
         if args.rank == 0:
             logger.info(
