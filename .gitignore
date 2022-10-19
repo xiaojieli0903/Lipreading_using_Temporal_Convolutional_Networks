@@ -14,3 +14,5 @@ datasets/*
 .ipynb*/*
 datasets/
 datasets/*
+train_logs/
+train_logs
