@@ -166,8 +166,11 @@ def load_model(load_path,
     checkpoint = torch.load(load_path)
     if not discriminator_flag:
         loaded_state_dict = checkpoint['model_state_dict']
+        optimizer_state_dict = checkpoint['optimizer_state_dict']
+
     else:
         loaded_state_dict = checkpoint['model_D_state_dict']
+        optimizer_state_dict = checkpoint['optimizer_D_state_dict']
 
     if allow_size_mismatch:
         loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
@@ -198,10 +201,10 @@ def load_model(load_path,
     model.load_state_dict(loaded_state_dict, strict=not allow_size_mismatch)
     if optimizer is not None:
         if not discriminator_flag:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            optimizer.load_state_dict(optimizer_state_dict)
             return model, optimizer, checkpoint['epoch_idx'], checkpoint
         else:
-            optimizer.load_state_dict(checkpoint['optimizer_D_state_dict'])
+            optimizer.load_state_dict(optimizer_state_dict)
             return model, optimizer
     return model
 

@@ -496,6 +496,7 @@ class Lipreading(nn.Module):
                             inference=False)
                         feature_predict = feature_predict.view(-1, dim_frame)
                         if hypothesis_output is not None:
+                            # BS * h * dim --> B * Sh * dim --> B * dim
                             hypothesis_output = self.gather_func(hypothesis_output.view(B, -1, dim_frame),
                                                                  average_dim=1)
                             x = torch.cat([hypothesis_output.view(B, 1, dim_frame), x], dim=1)

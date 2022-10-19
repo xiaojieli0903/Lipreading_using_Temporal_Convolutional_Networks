@@ -654,7 +654,7 @@ def main():
         # resume from checkpoint
         if args.init_epoch > 0:
             model, optimizer, epoch_idx, ckpt_dict = load_model(
-                args.model_path, model, optimizer)
+                args.model_path, model, optimizer, allow_size_mismatch=args.allow_size_mismatch)
             args.init_epoch = epoch_idx
             ckpt_saver.set_best_from_ckpt(ckpt_dict)
             logger.info(
@@ -664,6 +664,7 @@ def main():
                 model_D, optimizer_D = load_model(args.model_path,
                                                   model_D,
                                                   optimizer,
+                                                  allow_size_mismatch=args.allow_size_mismatch,
                                                   discriminator_flag=True)
                 logger.info(
                     f'Discriminator Model and states have been successfully loaded from {args.model_path}'

@@ -22,5 +22,6 @@
     "use_hypotheses": true,
     "skip_number": 2,
     "predict_all": true,
-    "use_hypotheses": true
+    "use_hypotheses": true,
+    "no_norm": true
 }
