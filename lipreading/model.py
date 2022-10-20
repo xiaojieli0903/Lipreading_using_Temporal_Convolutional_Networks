@@ -184,7 +184,7 @@ class Lipreading(nn.Module):
                  linear_config=None,
                  predict_future=-1,
                  frontend_type='3D',
-                 use_memory=False,
+                 use_memory=True,
                  membanks_size=1024,
                  predict_residual=False,
                  predict_type=1,
@@ -194,10 +194,11 @@ class Lipreading(nn.Module):
                  use_gan=False,
                  output_layer='backbone',
                  skip_number=1,
-                 choose_by_context=False,
+                 choose_by_global=False,
                  predict_all=False,
                  detach_all=False,
-                 choose_max=False
+                 choose_type='cosine',
+                 context_type='exclude'
                  ):
         super(Lipreading, self).__init__()
         if linear_config is None:
@@ -212,17 +213,18 @@ class Lipreading(nn.Module):
         self.use_memory = use_memory
         self.membanks_size = membanks_size
         self.predict_residual = predict_residual
-        self.predict_type = predict_type
         self.block_size = block_size
         self.memory_type = memory_type
         self.use_gan = use_gan
         self.output_layer = output_layer
         self.gather_func = _average_batch
         self.skip_number = skip_number
-        self.choose_by_context = choose_by_context
+        self.choose_by_global = choose_by_global
         self.predict_all = predict_all
         self.detach_all = detach_all
-        self.choose_max = choose_max
+        self.choose_type = choose_type
+        assert context_type in ['exclude', 'all']
+        self.context_type = context_type
 
         if self.modality == 'audio':
             self.frontend_nout = 1
@@ -309,9 +311,9 @@ class Lipreading(nn.Module):
                         n_head=memory_options['head'],
                         fix_memory=memory_options['fix_memory'],
                         no_norm=memory_options['no_norm'],
-                        choose_by_context=self.choose_by_context,
+                        choose_by_global=self.choose_by_global,
                         use_hypotheses=memory_options['use_hypotheses'],
-                        choose_max=self.choose_max
+                        choose_type=self.choose_type
                     )
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
@@ -367,140 +369,144 @@ class Lipreading(nn.Module):
                 x = x.view(-1, self.stage_out_channels)
             x = x.view(B, Tnew, x.size(1))
             dim_frame = x.shape[-1]
+
+            feature_context = feature_target = features_pos = features_neg = feature_global = None
             if self.predict_future > 0:
-                feature_context = feature_target = features_pos = features_neg = feature_exclude_predicts = None
                 predict_times = None
                 context_num = 2
                 # generate the context features and target features
-                if self.predict_type == 1:
-                    if self.detach_all:
-                        time_chunks = torch.split(x.detach(), self.block_size, dim=1)[:-1]
-                    else:
-                        time_chunks = torch.split(x, self.block_size, dim=1)[:-1]
-                    if self.predict_all and self.skip_number > 1:
-                        for skip_number in range(self.skip_number):
-                            predict_times = len(
-                                time_chunks) - context_num - skip_number + 1
-                            for i in range(0, predict_times):
-                                if feature_context is None:
-                                    feature_context = self.gather_func(torch.cat(
-                                        time_chunks[i:i + context_num], 1),
-                                        average_dim=1)
-                                    feature_target = self.gather_func(
-                                        time_chunks[i + context_num + skip_number - 1])
-                                    if self.choose_by_context:
-                                        feature_exclude_predicts = self.gather_func(
-                                            torch.cat(
-                                                time_chunks[:i + context_num] +
-                                                time_chunks[(i + context_num +
-                                                             skip_number):], 1),
-                                            average_dim=1)
-                                else:
-                                    feature_context = torch.cat((self.gather_func(
-                                        torch.cat(time_chunks[i:i + context_num], 1),
-                                        average_dim=1), feature_context),
-                                        dim=0)
-                                    feature_target = torch.cat((self.gather_func(
-                                        time_chunks[i + context_num + skip_number - 1],
-                                        average_dim=1), feature_target),
-                                        dim=0)
-                                    if self.choose_by_context:
-                                        feature_exclude_predicts = torch.cat(
-                                            (self.gather_func(torch.cat(
-                                                time_chunks[:i + context_num] +
-                                                time_chunks[(i + context_num +
-                                                             skip_number):], 1),
-                                                average_dim=1),
-                                             feature_exclude_predicts),
-                                            dim=0)
-                    else:
-                        skip_number = self.skip_number
+                if self.detach_all:
+                    time_chunks = torch.split(x.detach(), self.block_size, dim=1)[:-1]
+                else:
+                    time_chunks = torch.split(x, self.block_size, dim=1)[:-1]
+                if self.predict_all and self.skip_number > 1:
+                    for skip_number in range(self.skip_number):
                         predict_times = len(
                             time_chunks) - context_num - skip_number + 1
                         for i in range(0, predict_times):
                             if feature_context is None:
                                 feature_context = self.gather_func(torch.cat(
                                     time_chunks[i:i + context_num], 1),
-                                                                   average_dim=1)
+                                    average_dim=1)
                                 feature_target = self.gather_func(
                                     time_chunks[i + context_num + skip_number - 1])
-                                if self.choose_by_context:
-                                    feature_exclude_predicts = self.gather_func(
+                                if self.choose_by_global:
+                                    if self.context_type == 'exclude':
+                                        feature_global = self.gather_func(
+                                            torch.cat(
+                                                time_chunks[:i + context_num] +
+                                                time_chunks[(i + context_num +
+                                                             skip_number):], 1),
+                                            average_dim=1)
+                                    else:
+                                        feature_global = self.gather_func(x, average_dim=1)
+                            else:
+                                feature_context = torch.cat((self.gather_func(
+                                    torch.cat(time_chunks[i:i + context_num], 1),
+                                    average_dim=1), feature_context),
+                                    dim=0)
+                                feature_target = torch.cat((self.gather_func(
+                                    time_chunks[i + context_num + skip_number - 1],
+                                    average_dim=1), feature_target),
+                                    dim=0)
+                                if self.choose_by_global:
+                                    if self.context_type == 'exclude':
+                                        feature_global = torch.cat(
+                                            (self.gather_func(torch.cat(
+                                                time_chunks[:i + context_num] +
+                                                time_chunks[(i + context_num +
+                                                             skip_number):], 1),
+                                                average_dim=1),
+                                             feature_global),
+                                            dim=0)
+                                    else:
+                                        feature_global = torch.cat(
+                                            (self.gather_func(x, average_dim=1), feature_global),
+                                            dim=0)
+                else:
+                    skip_number = self.skip_number
+                    predict_times = len(
+                        time_chunks) - context_num - skip_number + 1
+                    for i in range(0, predict_times):
+                        if feature_context is None:
+                            feature_context = self.gather_func(torch.cat(
+                                time_chunks[i:i + context_num], 1),
+                                                               average_dim=1)
+                            feature_target = self.gather_func(
+                                time_chunks[i + context_num + skip_number - 1])
+                            if self.choose_by_global:
+                                if self.context_type == 'exclude':
+                                    feature_global = self.gather_func(
                                         torch.cat(
                                             time_chunks[:i + context_num] +
                                             time_chunks[(i + context_num +
                                                          skip_number):], 1),
                                         average_dim=1)
-                            else:
-                                feature_context = torch.cat((self.gather_func(
-                                    torch.cat(time_chunks[i:i + context_num], 1),
-                                    average_dim=1), feature_context),
-                                                            dim=0)
-                                feature_target = torch.cat((self.gather_func(
-                                    time_chunks[i + context_num + skip_number - 1],
-                                    average_dim=1), feature_target),
-                                                           dim=0)
-                                if self.choose_by_context:
-                                    feature_exclude_predicts = torch.cat(
+                                else:
+                                    feature_global = self.gather_func(x, average_dim=1)
+                        else:
+                            feature_context = torch.cat((self.gather_func(
+                                torch.cat(time_chunks[i:i + context_num], 1),
+                                average_dim=1), feature_context),
+                                                        dim=0)
+                            feature_target = torch.cat((self.gather_func(
+                                time_chunks[i + context_num + skip_number - 1],
+                                average_dim=1), feature_target),
+                                                       dim=0)
+                            if self.choose_by_global:
+                                if self.context_type == 'exclude':
+                                    feature_global = torch.cat(
                                         (self.gather_func(torch.cat(
                                             time_chunks[:i + context_num] +
                                             time_chunks[(i + context_num +
                                                          skip_number):], 1),
                                                           average_dim=1),
-                                         feature_exclude_predicts),
+                                         feature_global),
+                                        dim=0)
+                                else:
+                                    feature_global = torch.cat(
+                                        (self.gather_func(x, average_dim=1),
+                                         feature_global),
                                         dim=0)
 
-                            if self.use_gan and i != (predict_times - 1):
-                                features_block = [
-                                    self.gather_func(time_chunks[idx]).view(
-                                        B, -1, dim_frame)
-                                    for idx in range(i, i + context_num + 1)
-                                ]
-                                if features_pos is None:
-                                    # batch * 3 * dim
-                                    features_pos = torch.cat(features_block, dim=1)
-                                else:
-                                    # (batch * predict_times) * 3 * dim
-                                    features_pos = torch.cat((torch.cat(
-                                        features_block, dim=1), features_pos),
-                                                             dim=0)
-                elif self.predict_type == 0:
-                    # # batch * x.size(1)
-                    # context_lengths = [_ // 2 for _ in lengths]
-                    # feature_context = self.gather_func(x.transpose(1, 2),
-                    #                                  context_lengths, B)
-                    # feature_target = torch.stack([
-                    #     x[index, int(length * 0.75), :]
-                    #     for index, length in enumerate(lengths)
-                    # ], 0)
-                    pass
-                else:
-                    raise NotImplementedError(
-                        f'predict_type {self.predict_type} is not supported.')
+                        if self.use_gan and i != (predict_times - 1):
+                            features_block = [
+                                self.gather_func(time_chunks[idx]).view(
+                                    B, -1, dim_frame)
+                                for idx in range(i, i + context_num + 1)
+                            ]
+                            if features_pos is None:
+                                # batch * 3 * dim
+                                features_pos = torch.cat(features_block, dim=1)
+                            else:
+                                # (batch * predict_times) * 3 * dim
+                                features_pos = torch.cat((torch.cat(
+                                    features_block, dim=1), features_pos),
+                                                         dim=0)
 
-                target_recon_loss = contrastive_loss = None
-                if not self.use_memory:
-                    feature_predict = self.network_pred(feature_context)
+            target_recon_loss = contrastive_loss = None
+            if not self.use_memory:
+                feature_predict = self.network_pred(feature_context)
+            else:
+                if self.memory_type == 'memdpc':
+                    predict_logits = self.network_pred(feature_context)
+                    scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
+                    feature_predict = torch.einsum('bm,mc->bc', scores,
+                                                   self.membanks)
                 else:
-                    if self.memory_type == 'memdpc':
-                        predict_logits = self.network_pred(feature_context)
-                        scores = F.softmax(predict_logits, dim=1)  # B,MEM,H,W
-                        feature_predict = torch.einsum('bm,mc->bc', scores,
-                                                       self.membanks)
-                    else:
-                        feature_predict, feature_target_recon, target_recon_loss, contrastive_loss, hypothesis_output = self.memory(
-                            feature_context.view(-1, 1, dim_frame),
-                            feature_target.view(-1, 1, dim_frame),
-                            feature_exclude_predicts.view(-1, 1, dim_frame)
-                            if feature_exclude_predicts is not None else None,
-                            inference=False)
-                        feature_predict = feature_predict.view(-1, dim_frame)
-                        if hypothesis_output is not None:
-                            # BS * h * dim --> B * Sh * dim --> B * dim
-                            hypothesis_output = self.gather_func(hypothesis_output.view(B, -1, dim_frame),
-                                                                 average_dim=1)
-                            x = torch.cat([hypothesis_output.view(B, 1, dim_frame), x], dim=1)
-                            lengths = [(length + 1) for length in lengths]
+                    feature_predict, feature_target_recon, target_recon_loss, contrastive_loss, hypothesis_output = self.memory(
+                        feature_context.view(-1, 1, dim_frame),
+                        feature_target.view(-1, 1, dim_frame),
+                        feature_global.view(-1, 1, dim_frame)
+                        if feature_global is not None else None,
+                        inference=False)
+                    feature_predict = feature_predict.view(-1, dim_frame)
+                    if hypothesis_output is not None:
+                        # BS * h * dim --> B * Sh * dim --> B * dim
+                        hypothesis_output = self.gather_func(hypothesis_output.view(B, -1, dim_frame),
+                                                             average_dim=1)
+                        x = torch.cat([hypothesis_output.view(B, 1, dim_frame), x], dim=1)
+                        lengths = [(length + 1) for length in lengths]
 
                 if self.predict_residual:
                     feature_target = feature_target - feature_predict

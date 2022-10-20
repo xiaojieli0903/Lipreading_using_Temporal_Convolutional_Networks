@@ -543,7 +543,7 @@ def get_model_from_json():
                                          {'linear_type': 'Linear'})
     args.predict_future = args_loaded.get("predict_future", -1)
     args.frontend_type = args_loaded.get("frontend_type", '3D')
-    args.use_memory = args_loaded.get("use_memory", False)
+    args.use_memory = args_loaded.get("use_memory", True)
     args.membanks_size = args_loaded.get("membanks_size", 1024)
     args.predict_residual = args_loaded.get("predict_residual", False)
     args.predict_type = args_loaded.get("predict_type", 1)
@@ -554,15 +554,16 @@ def get_model_from_json():
             'radius': args_loaded.get('radius', 16),
             'slot': args_loaded.get('slot', 112),
             'head': args_loaded.get('head', 8),
-            'fix_memory': args_loaded.get('fix_memory', False),
+            'fix_memory': args_loaded.get('fix_memory', True),
             'no_norm': args_loaded.get('no_norm', False),
             'use_hypotheses': args_loaded.get('use_hypotheses', False),
         })
     args.skip_number = args_loaded.get('skip_number', 1)
-    args.choose_by_context = args_loaded.get('choose_by_context', False)
+    args.choose_by_global = args_loaded.get('choose_by_global', False)
     args.predict_all = args_loaded.get('predict_all', False)
     args.detach_all = args_loaded.get('detach_all', False)
-    args.choose_max = args_loaded.get('choose_max', False)
+    args.choose_type = args_loaded.get('choose_type', 'cosine')
+    args.context_type = args_loaded.get('context_type', 'exclude')
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -610,10 +611,11 @@ def get_model_from_json():
         use_gan=args.use_gan,
         output_layer=args.output_layer,
         skip_number=args.skip_number,
-        choose_by_context=args.choose_by_context,
+        choose_by_global=args.choose_by_global,
         predict_all=args.predict_all,
         detach_all=args.detach_all,
-        choose_max=args.choose_max,
+        choose_type=args.choose_type,
+        context_type=args.context_type
     ).cuda()
     calculateNorm2(model)
     return model

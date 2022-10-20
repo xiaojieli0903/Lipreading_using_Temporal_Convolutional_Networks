@@ -20,7 +20,7 @@
     "fix_memory": true,
     "skip_number": 2,
     "no_norm": true,
-    "choose_by_context": true,
+    "choose_by_global": true,
     "predict_all": true,
     "head": 16
 }

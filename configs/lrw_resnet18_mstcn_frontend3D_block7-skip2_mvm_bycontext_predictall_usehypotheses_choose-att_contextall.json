@@ -15,10 +15,15 @@
     "predict_future": 1,
     "use_memory": true,
     "predict_type": 1,
-    "block_size": 5,
+    "block_size": 7,
     "memory_type": "mvm",
     "fix_memory": true,
+    "choose_by_global": true,
+    "use_hypotheses": true,
     "skip_number": 2,
-    "no_norm": true,
-    "choose_by_global": true
+    "predict_all": true,
+    "use_hypotheses": true,
+    "no_norm": false,
+    "choose_type": "attention",
+    "context_type": "all"
 }

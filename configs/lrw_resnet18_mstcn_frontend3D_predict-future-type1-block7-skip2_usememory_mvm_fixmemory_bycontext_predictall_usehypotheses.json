@@ -18,10 +18,10 @@
     "block_size": 7,
     "memory_type": "mvm",
     "fix_memory": true,
-    "choose_by_context": true,
+    "choose_by_global": true,
     "use_hypotheses": true,
     "skip_number": 2,
     "predict_all": true,
     "use_hypotheses": true,
-    "no_norm": true
+    "no_norm": false
 }
