@@ -113,7 +113,7 @@ class Memory(nn.Module):
                 max_idxs_ = []
                 for i in range(max_idxs.shape[0]):
                     max_idxs_.append(max_idxs[i] + i * m_head_out.shape[1])
-                attention_output = m_head_out.view(-1, C)[max_idxs_]
+                attention_output = m_head_out.view(-1, C)[torch.tensor(max_idxs_).long()]
             else:
                 # (BS , n_head) * (BS, n_head, head_dim)
                 attention_output = torch.einsum('bh, bhd->bd', hypothesis_address,
