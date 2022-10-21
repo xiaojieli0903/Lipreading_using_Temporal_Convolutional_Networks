@@ -14,7 +14,8 @@ class Memory(nn.Module):
                  choose_by_global=False,
                  no_norm=False,
                  use_hypotheses=False,
-                 choose_type='cosine'):
+                 choose_type='cosine',
+                 contrastive_hypo=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -25,6 +26,7 @@ class Memory(nn.Module):
         self.use_hypotheses = use_hypotheses
         assert choose_type in ['cosine', 'attention']
         self.choose_type = choose_type
+        self.contrastive_hypo = contrastive_hypo
 
         self.key = nn.Parameter(torch.Tensor(int(n_head * n_slot),
                                              int(512 / n_head)),
@@ -73,8 +75,8 @@ class Memory(nn.Module):
                 inference=False):
         # B, S, 512
         B, S, C = query.size()
-        f_target_recon, recon_loss, contrastive_loss, hypothesis_output = None, torch.zeros(
-            1).cuda(), torch.zeros(1).cuda(), None
+        f_target_recon, hypothesis_output = None, None
+        recon_loss, contrastive_loss, hypo_contrastive_loss = torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda()
         key_normalized = F.normalize(self.key.view(self.n_head, self.n_slot, -1),
                                      dim=2)  # n_head, n_slot, head_dim
         query_proj = self.q_proj_weight(query.view(B * S, -1))  # B*S, n_head * head_dim
@@ -90,6 +92,12 @@ class Memory(nn.Module):
 
         # (BS, n_head, n_slot) * (n_slot , 512) --> BS, n_head, 512
         m_head_out = torch.matmul(key_address, self.value.detach())
+        if self.contrastive_hypo:
+            m_head_out_normed = F.normalize(m_head_out, dim=2)
+            out_sim = torch.einsum('bcd, bed->bce', m_head_out_normed, m_head_out_normed)  # BS, n_head, n_head
+            hypo_contrastive_loss = torch.abs(
+                torch.eye(self.n_head).view(1, self.n_head, self.n_head).repeat(B*S, 1, 1).cuda()
+                - out_sim).sum() / (B * S)
         # ----visualize code
         #  m_head_out_normed = F.normalize(m_head_out, dim=2)
         #  out_cosine_sim = torch.einsum('bcd, bed->bce', m_head_out_normed, m_head_out_normed) # BS, n_head, n_head
@@ -152,8 +160,7 @@ class Memory(nn.Module):
             # ----visualize code
             contrastive_loss = torch.abs(
                 torch.eye(self.n_slot).cuda() -
-                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum(
-                ) * 0.01  # n_slot, n_slot
+                torch.matmul(value_norm, value_norm.transpose(0, 1))).sum() * 0.01  # n_slot, n_slot
             #  print (torch.matmul(value_norm, value_norm.transpose(0, 1)) - torch.eye(112).cuda()).shape
             recon_loss = torch.abs(1.0 - F.cosine_similarity(
                 attention_recon, value.detach(), 1)).sum() / (B * S)
@@ -167,4 +174,4 @@ class Memory(nn.Module):
             f_target_recon = attention_recon.view(B, S, -1)
             # f_target_recon = self.dropout(self.norm1(query + attention_recon.view(B, S, -1)))
 
-        return f_predict, f_target_recon, recon_loss, contrastive_loss, hypothesis_output
+        return f_predict, f_target_recon, recon_loss, contrastive_loss, hypothesis_output, hypo_contrastive_loss

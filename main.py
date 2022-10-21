@@ -272,6 +272,11 @@ def load_args(default_config=None):
                         type=int,
                         default=20000,
                         help='the start iter of the gan loss.')
+    # hypo-contrastive loss weight
+    parser.add_argument('--hypo-contrastive-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the hypo_contrastive loss weight.')
     args = parser.parse_args()
     return args
 
@@ -421,7 +426,7 @@ def train(model,
         loss = torch.zeros(1).float().cuda()
         predict_times = 0
         if model.predict_future >= 0:
-            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg = model(
+            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg, hypo_contrastive_loss = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
@@ -480,6 +485,10 @@ def train(model,
                 loss_weight['loss_target_recon'] = args.recon_loss_weight
                 loss_dict['loss_contrastive'] = contrastive_loss
                 loss_weight['loss_contrastive'] = args.contrastive_loss_weight
+            if args.contrastive_hypo:
+                loss += args.hypo_contrastive_loss_weight * hypo_contrastive_loss
+                loss_dict['loss_hypo_contrastive_loss'] = hypo_contrastive_loss
+                loss_weight['loss_hypo_contrastive_loss'] = args.hypo_contrastive_loss_weight
         else:
             logits = model(input.unsqueeze(1).cuda(),
                            lengths=lengths,
@@ -557,6 +566,7 @@ def get_model_from_json():
             'fix_memory': args_loaded.get('fix_memory', True),
             'no_norm': args_loaded.get('no_norm', False),
             'use_hypotheses': args_loaded.get('use_hypotheses', False),
+            'contrastive_hypo': args_loaded.get('contrastive_hypo', False),
         })
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_global = args_loaded.get('choose_by_global', False)
@@ -564,6 +574,7 @@ def get_model_from_json():
     args.detach_all = args_loaded.get('detach_all', False)
     args.choose_type = args_loaded.get('choose_type', 'cosine')
     args.context_type = args_loaded.get('context_type', 'exclude')
+    args.contrastive_hypo = args_loaded.get('contrastive_hypo', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {

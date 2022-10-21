@@ -313,7 +313,8 @@ class Lipreading(nn.Module):
                         no_norm=memory_options['no_norm'],
                         choose_by_global=self.choose_by_global,
                         use_hypotheses=memory_options['use_hypotheses'],
-                        choose_type=self.choose_type
+                        choose_type=self.choose_type,
+                        contrastive_hypo=memory_options['contrastive_hypo']
                     )
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')
@@ -494,7 +495,7 @@ class Lipreading(nn.Module):
                     feature_predict = torch.einsum('bm,mc->bc', scores,
                                                    self.membanks)
                 else:
-                    feature_predict, feature_target_recon, target_recon_loss, contrastive_loss, hypothesis_output = self.memory(
+                    feature_predict, feature_target_recon, target_recon_loss, contrastive_loss, hypothesis_output, hypo_contrastive_loss = self.memory(
                         feature_context.view(-1, 1, dim_frame),
                         feature_target.view(-1, 1, dim_frame),
                         feature_global.view(-1, 1, dim_frame)
@@ -541,7 +542,7 @@ class Lipreading(nn.Module):
             else:
                 return self.tcn(
                     x, lengths, B, targets
-                ), feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg
+                ), feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg, hypo_contrastive_loss
 
         # return x if self.extract_feats else self.tcn(x, lengths, B, targets)
 
