@@ -25,5 +25,5 @@
     "use_hypotheses": true,
     "no_norm": false,
     "dim_query": 128,
-    "head": 8
+    "n_head": 8
 }

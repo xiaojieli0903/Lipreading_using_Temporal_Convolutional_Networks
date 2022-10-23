@@ -186,7 +186,6 @@ class Lipreading(nn.Module):
                  use_memory=True,
                  membanks_size=1024,
                  predict_residual=False,
-                 predict_type=1,
                  block_size=5,
                  memory_type='memdpc',
                  memory_options={},
@@ -301,19 +300,23 @@ class Lipreading(nn.Module):
                     print('MEM Bank has size %dx%d' %
                           (self.membanks_size, self.backend_out))
                 elif self.memory_type == 'mvm':
+                    # self.memory = Memory(
+                    #     radius=memory_options['radius'],
+                    #     n_slot=memory_options['n_slot'],
+                    #     n_head=memory_options['n_head'],
+                    #     no_norm=memory_options['no_norm'],
+                    #     choose_by_global=memory_options['choose_by_global'],
+                    #     use_hypotheses=memory_options['use_hypotheses'],
+                    #     choose_type=memory_options['choose_type'],
+                    #     contrastive_hypo=memory_options['contrastive_hypo'],
+                    #     dim_query=memory_options['dim_query'],
+                    #     match_global=memory_options['match_global'],
+                    #     use_kd=memory_options['use_kd'],
+                    #     value_adaptive=memory_options['value_adaptive'],
+                    #     loss_type=memory_options['loss_type'],
+                    # )
                     self.memory = Memory(
-                        radius=memory_options['radius'],
-                        n_slot=memory_options['slot'],
-                        n_head=memory_options['head'],
-                        no_norm=memory_options['no_norm'],
-                        choose_by_global=memory_options['choose_by_global'],
-                        use_hypotheses=memory_options['use_hypotheses'],
-                        choose_type=memory_options['choose_type'],
-                        contrastive_hypo=memory_options['contrastive_hypo'],
-                        dim_query=memory_options['dim_query'],
-                        match_global=memory_options['match_global'],
-                        use_kd=memory_options['use_kd'],
-                        value_adaptive=memory_options['value_adaptive'],
+                        **memory_options
                     )
                 else:
                     raise RuntimeError(f'{self.memory_type} is not supported.')

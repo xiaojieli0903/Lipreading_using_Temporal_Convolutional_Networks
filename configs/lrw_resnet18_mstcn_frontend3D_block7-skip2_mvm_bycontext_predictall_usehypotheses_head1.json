@@ -24,5 +24,5 @@
     "predict_all": true,
     "use_hypotheses": true,
     "no_norm": false,
-    "head": 1
+    "n_head": 1
 }

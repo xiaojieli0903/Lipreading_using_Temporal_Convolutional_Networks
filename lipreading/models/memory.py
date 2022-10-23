@@ -22,7 +22,8 @@ class Memory(nn.Module):
                  contrastive_hypo=False,
                  match_global=False,
                  use_kd=False,
-                 value_adaptive=False):
+                 value_adaptive=False,
+                 loss_type='cosine'):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -41,6 +42,7 @@ class Memory(nn.Module):
         self.match_global = match_global
         self.use_kd = use_kd
         self.value_adaptive = value_adaptive
+        self.loss_type = loss_type
 
         self.key = nn.Parameter(torch.Tensor(n_head * n_slot, self.dim_query),
                                 requires_grad=True)
@@ -153,6 +155,7 @@ class Memory(nn.Module):
             if self.match_global:
                 match_global_loss = calculate_loss(f_global_proj,
                                                    value,
+                                                   loss_type=self.loss_type,
                                                    average_dim=0)
             hypothesis_address = self.softmax2(self.radius * global_local_sim)
             # if self.choose_type == 'max':
@@ -189,10 +192,12 @@ class Memory(nn.Module):
             # f_knowledge = torch.mean(torch.cat(
             #     (m_head_out, query.view(B*S, 1, self.dim_input)), dim=1),
             #     dim=1)
+
             # hypotheses aggregate: BS, n_head, dim_mem --> BS, dim_mem
             f_knowledge = torch.mean(m_head_out, dim=1)
             kd_loss = calculate_loss(query_kd_proj,
                                      f_knowledge.detach(),
+                                     loss_type=self.loss_type,
                                      average_dim=0)
         # Update Value
         # n_slot, dim_mem

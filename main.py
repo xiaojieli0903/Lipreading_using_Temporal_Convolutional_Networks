@@ -456,17 +456,17 @@ def train(model,
                 loss_dict['loss_contrastive'] = contrastive_loss
                 loss_weight[
                     'loss_contrastive'] = args.mvm_contrastive_loss_weight
-            if args.contrastive_hypo:
+            if args.memory_options['contrastive_hypo']:
                 loss += args.mvm_hypo_contrastive_loss_weight * hypo_contrastive_loss
                 loss_dict['loss_hypo_contrastive'] = hypo_contrastive_loss
                 loss_weight[
                     'loss_hypo_contrastive'] = args.mvm_hypo_contrastive_loss_weight
-            if args.match_global:
+            if args.memory_options['match_global']:
                 loss += args.mvm_match_global_loss_weight * match_global_loss
                 loss_dict['loss_match_global'] = match_global_loss
                 loss_weight[
                     'loss_match_global'] = args.mvm_match_global_loss_weight
-            if args.use_kd:
+            if args.memory_options['use_kd']:
                 loss += args.mvm_kd_loss_weight * kd_loss
                 loss_dict['loss_kd'] = kd_loss
                 loss_weight['loss_kd'] = args.mvm_kd_loss_weight
@@ -538,15 +538,14 @@ def get_model_from_json():
     args.use_memory = args_loaded.get("use_memory", True)
     args.membanks_size = args_loaded.get("membanks_size", 1024)
     args.predict_residual = args_loaded.get("predict_residual", False)
-    args.predict_type = args_loaded.get("predict_type", 1)
     args.block_size = args_loaded.get("block_size", 5)
     args.memory_type = args_loaded.get('memory_type', 'memdpc')
 
     args.memory_options = args_loaded.get(
         "memory_options", {
             'radius': args_loaded.get('radius', 16),
-            'slot': args_loaded.get('slot', 112),
-            'head': args_loaded.get('head', 8),
+            'n_slot': args_loaded.get('slot', 112),
+            'n_head': args_loaded.get('head', 8),
             'no_norm': args_loaded.get('no_norm', False),
             'choose_by_global': args_loaded.get('choose_by_global', False),
             'use_hypotheses': args_loaded.get('use_hypotheses', False),
@@ -556,6 +555,7 @@ def get_model_from_json():
             'match_global': args_loaded.get('match_global', False),
             'use_kd': args_loaded.get('use_kd', False),
             'value_adaptive': args_loaded.get('value_adaptive', False),
+            'loss_type': args.predict_loss_type,
         })
 
     args.skip_number = args_loaded.get('skip_number', 1)
@@ -602,7 +602,6 @@ def get_model_from_json():
                        use_memory=args.use_memory,
                        membanks_size=args.membanks_size,
                        predict_residual=args.predict_residual,
-                       predict_type=args.predict_type,
                        block_size=args.block_size,
                        memory_type=args.memory_type,
                        memory_options=args.memory_options,

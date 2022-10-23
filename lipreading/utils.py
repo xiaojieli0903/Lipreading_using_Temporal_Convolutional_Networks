@@ -6,9 +6,10 @@ import shutil
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
-def calculate_loss(pred, target, loss_type='l2', average_dim=0):
+def calculate_loss(pred, target, loss_type='cosine', average_dim=0):
     """calculate loss.
 
     Args:

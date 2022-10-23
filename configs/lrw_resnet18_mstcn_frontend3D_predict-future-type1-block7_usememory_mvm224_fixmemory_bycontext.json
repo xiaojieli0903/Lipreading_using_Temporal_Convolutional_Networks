@@ -19,5 +19,5 @@
     "memory_type": "mvm",
     "fix_memory": true,
     "choose_by_global": true,
-    "slot": 224
+    "n_slot": 224
 }
