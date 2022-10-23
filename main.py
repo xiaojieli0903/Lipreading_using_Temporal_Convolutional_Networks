@@ -23,9 +23,9 @@ from lipreading.mixup import mixup_criterion, mixup_data
 from lipreading.model import Lipreading
 from lipreading.models.discriminator import Discriminator
 from lipreading.optim_utils import CosineScheduler, get_optimizer
-from lipreading.utils import (AverageMeter, CheckpointSaver, calculateNorm2,
-                              get_logger, get_save_folder, load_json,
-                              load_model, save2npz, showLR,
+from lipreading.utils import (AverageMeter, CheckpointSaver, calculate_loss,
+                              calculateNorm2, get_logger, get_save_folder,
+                              load_json, load_model, save2npz, showLR,
                               update_logger_batch)
 
 
@@ -181,8 +181,7 @@ def load_args(default_config=None):
         type=str,
         default=None,
         help='Path to the mouth ROIs, assuming the file is saved as '
-             'numpy.array'
-    )
+        'numpy.array')
     parser.add_argument('--mouth-embedding-out-path',
                         type=str,
                         default='',
@@ -309,32 +308,6 @@ def extract_feats(model, path_list):
                       1, data.shape[0], 1)).cpu().detach().numpy())
 
 
-def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
-    """calculate loss.
-
-    Args:
-        pred (torch.Tensor): The predict.
-        target (torch.Tensor): The learning target of the predict.
-        loss_type (str): The type of the  loss
-        average_dim (int): The average dim of loss.
-    Returns:
-        torch.Tensor: Calculated loss
-    """
-    assert pred.size() == target.size() and target.numel() > 0
-    if loss_type == 'l2':
-        loss = torch.sum(torch.pow(pred - target, 2))
-    elif loss_type == 'cosine':
-        loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
-    else:
-        raise RuntimeError(f'Loss type {loss_type} is not supported.')
-
-    if average_dim == -1:
-        loss /= target.numel()
-    else:
-        loss /= target.shape[average_dim]
-    return loss
-
-
 def evaluate(model, dset_loader, criterion):
     model.eval()
 
@@ -350,7 +323,8 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.predict_future >= 0:
-                logits, feature_predict, feature_target, _, _, _, _, _, _, _ = model(
+                logits, feature_predict, feature_target, \
+                _, _, _, _, _, _, _ = model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -366,10 +340,8 @@ def evaluate(model, dset_loader, criterion):
             running_loss += loss.item() * input.size(0)
     logits = preds = input = labels = None
 
-    print(
-        f"{len(dset_loader.dataset)} in total\tCR: "
-        f"{running_corrects / len(dset_loader.dataset)}"
-    )
+    print(f"{len(dset_loader.dataset)} in total\tCR: "
+          f"{running_corrects / len(dset_loader.dataset)}")
     return running_corrects / len(dset_loader.dataset), running_loss / len(
         dset_loader.dataset)
 
@@ -419,7 +391,9 @@ def train(model,
         loss = torch.zeros(1).float().cuda()
         predict_times = 0
         if model.predict_future >= 0:
-            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg, hypo_contrastive_loss, match_global_loss, kd_loss = model(
+            logits, feature_predict, feature_target, target_recon_loss, \
+            contrastive_loss, features_pos, features_neg, \
+            hypo_contrastive_loss, match_global_loss, kd_loss = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
@@ -466,8 +440,7 @@ def train(model,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict,
-                                              feature_target,
+                loss_predict = calculate_loss(feature_predict, feature_target,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
 
@@ -481,15 +454,18 @@ def train(model,
                 loss_weight['loss_target_recon'] = args.mvm_recon_loss_weight
                 loss += args.mvm_contrastive_loss_weight * contrastive_loss
                 loss_dict['loss_contrastive'] = contrastive_loss
-                loss_weight['loss_contrastive'] = args.mvm_contrastive_loss_weight
+                loss_weight[
+                    'loss_contrastive'] = args.mvm_contrastive_loss_weight
             if args.contrastive_hypo:
                 loss += args.mvm_hypo_contrastive_loss_weight * hypo_contrastive_loss
                 loss_dict['loss_hypo_contrastive'] = hypo_contrastive_loss
-                loss_weight['loss_hypo_contrastive'] = args.mvm_hypo_contrastive_loss_weight
+                loss_weight[
+                    'loss_hypo_contrastive'] = args.mvm_hypo_contrastive_loss_weight
             if args.match_global:
                 loss += args.mvm_match_global_loss_weight * match_global_loss
                 loss_dict['loss_match_global'] = match_global_loss
-                loss_weight['loss_match_global'] = args.mvm_match_global_loss_weight
+                loss_weight[
+                    'loss_match_global'] = args.mvm_match_global_loss_weight
             if args.use_kd:
                 loss += args.mvm_kd_loss_weight * kd_loss
                 loss_dict['loss_kd'] = kd_loss
@@ -540,8 +516,9 @@ def train(model,
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 loss_weight, running_corrects, running_all, batch_time,
-                data_time, lr, torch.cuda.max_memory_allocated() / 1024 / 1024,
-                accuracy, predict_times)
+                data_time, lr,
+                torch.cuda.max_memory_allocated() / 1024 / 1024, accuracy,
+                predict_times)
 
     return model
 
@@ -610,34 +587,32 @@ def get_model_from_json():
     else:
         densetcn_options = {}
 
-    model = Lipreading(
-        modality=args.modality,
-        num_classes=args.num_classes,
-        tcn_options=tcn_options,
-        densetcn_options=densetcn_options,
-        backbone_type=args.backbone_type,
-        relu_type=args.relu_type,
-        width_mult=args.width_mult,
-        use_boundary=args.use_boundary,
-        extract_feats=args.extract_feats,
-        linear_config=args.linear_config,
-        predict_future=args.predict_future,
-        frontend_type=args.frontend_type,
-        use_memory=args.use_memory,
-        membanks_size=args.membanks_size,
-        predict_residual=args.predict_residual,
-        predict_type=args.predict_type,
-        block_size=args.block_size,
-        memory_type=args.memory_type,
-        memory_options=args.memory_options,
-        use_gan=args.use_gan,
-        output_layer=args.output_layer,
-        skip_number=args.skip_number,
-        choose_by_global=args.choose_by_global,
-        predict_all=args.predict_all,
-        detach_all=args.detach_all,
-        context_type=args.context_type
-    ).cuda()
+    model = Lipreading(modality=args.modality,
+                       num_classes=args.num_classes,
+                       tcn_options=tcn_options,
+                       densetcn_options=densetcn_options,
+                       backbone_type=args.backbone_type,
+                       relu_type=args.relu_type,
+                       width_mult=args.width_mult,
+                       use_boundary=args.use_boundary,
+                       extract_feats=args.extract_feats,
+                       linear_config=args.linear_config,
+                       predict_future=args.predict_future,
+                       frontend_type=args.frontend_type,
+                       use_memory=args.use_memory,
+                       membanks_size=args.membanks_size,
+                       predict_residual=args.predict_residual,
+                       predict_type=args.predict_type,
+                       block_size=args.block_size,
+                       memory_type=args.memory_type,
+                       memory_options=args.memory_options,
+                       use_gan=args.use_gan,
+                       output_layer=args.output_layer,
+                       skip_number=args.skip_number,
+                       choose_by_global=args.choose_by_global,
+                       predict_all=args.predict_all,
+                       detach_all=args.detach_all,
+                       context_type=args.context_type).cuda()
     calculateNorm2(model)
     return model
 
@@ -678,20 +653,21 @@ def main():
         # resume from checkpoint
         if args.init_epoch > 0:
             model, optimizer, epoch_idx, ckpt_dict = load_model(
-                args.model_path, model, optimizer,
+                args.model_path,
+                model,
+                optimizer,
                 allow_size_mismatch=args.allow_size_mismatch)
             args.init_epoch = epoch_idx
             ckpt_saver.set_best_from_ckpt(ckpt_dict)
-            logger.info(
-                f'Model and states have been successfully loaded '
-                f'from {args.model_path}'
-            )
+            logger.info(f'Model and states have been successfully loaded '
+                        f'from {args.model_path}')
             if args.use_gan:
-                model_D, optimizer_D = load_model(args.model_path,
-                                                  model_D,
-                                                  optimizer,
-                                                  allow_size_mismatch=args.allow_size_mismatch,
-                                                  discriminator_flag=True)
+                model_D, optimizer_D = load_model(
+                    args.model_path,
+                    model_D,
+                    optimizer,
+                    allow_size_mismatch=args.allow_size_mismatch,
+                    discriminator_flag=True)
                 logger.info(
                     f'Discriminator Model and states have been successfully loaded from {args.model_path}'
                 )

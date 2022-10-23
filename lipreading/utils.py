@@ -8,6 +8,32 @@ import numpy as np
 import torch
 
 
+def calculate_loss(pred, target, loss_type='l2', average_dim=0):
+    """calculate loss.
+
+    Args:
+        pred (torch.Tensor): The predict.
+        target (torch.Tensor): The learning target of the predict.
+        loss_type (str): The type of the  loss
+        average_dim (int): The average dim of loss.
+    Returns:
+        torch.Tensor: Calculated loss
+    """
+    assert pred.size() == target.size() and target.numel() > 0
+    if loss_type == 'l2':
+        loss = torch.sum(torch.pow(pred - target, 2))
+    elif loss_type == 'cosine':
+        loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
+    else:
+        raise RuntimeError(f'Loss type {loss_type} is not supported.')
+
+    if average_dim == -1:
+        loss /= target.numel()
+    else:
+        loss /= target.shape[average_dim]
+    return loss
+
+
 def calculateNorm2(model):
     para_norm = 0.
     for p in model.parameters():
@@ -176,17 +202,17 @@ def load_model(load_path,
         loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
         model_state_dict = model.state_dict()
         model_sizes = {k: v.shape for k, v in model_state_dict.items()}
-        
+
         ckpt_keys = set(loaded_state_dict.keys())
         own_keys = set(model_state_dict.keys())
         missing_keys = own_keys - ckpt_keys
         notfound_keys = ckpt_keys - own_keys
         for key in missing_keys:
             print(f'**missing key while load model: {key}')
-            
+
         for key in notfound_keys:
             print(f'**not founded key in current model: {key}')
-        
+
         mismatched_params = []
         for k in loaded_sizes:
             if k in notfound_keys:
@@ -233,7 +259,8 @@ def get_logger(args, save_path):
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
                         loss_dict, loss_weight, running_corrects, running_all,
-                        batch_time, data_time, lr, mem, accuracy, predict_times):
+                        batch_time, data_time, lr, mem, accuracy,
+                        predict_times):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     logger.info(
         f"[{batch_idx:5.0f}/{len(dset_loader):5.0f} | {running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)] | "
@@ -242,7 +269,8 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
         f"lr:{lr:.6f} | "
         f"Mem:{mem:.3f}M | "
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
-        f"Instances per second: {args.batch_size/batch_time.avg:.2f} | Predict_instances: {predict_times:5.0f}")
+        f"Instances per second: {args.batch_size/batch_time.avg:.2f} | Predict_instances: {predict_times:5.0f}"
+    )
     for key in loss_dict:
         if key in accuracy.keys():
             logger.info(
