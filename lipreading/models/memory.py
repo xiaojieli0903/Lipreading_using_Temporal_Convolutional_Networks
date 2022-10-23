@@ -18,7 +18,9 @@ class Memory(nn.Module):
                  use_hypotheses=False,
                  choose_type='cosine',
                  contrastive_hypo=False,
-                 match_global=False):
+                 match_global=False,
+                 use_kd=False,
+                 value_adaptive=False):
         super().__init__()
         self.diff_key_value = diff_key_value
 
@@ -35,6 +37,8 @@ class Memory(nn.Module):
         self.dim_mem = dim_mem
         self.dim_output = dim_output
         self.match_global = match_global
+        self.use_kd = use_kd
+        self.value_adaptive = value_adaptive
 
         self.key = nn.Parameter(torch.Tensor(n_head * n_slot, self.dim_query),
                                 requires_grad=True)
@@ -49,7 +53,7 @@ class Memory(nn.Module):
             else:
                 self.out_proj = nn.Linear(n_head * self.dim_mem, self.dim_output)
             if not self.no_norm:
-                # self.norm1 = nn.LayerNorm(dim)
+                #self.norm1 = nn.LayerNorm(dim)
                 self.norm2 = nn.LayerNorm(self.dim_output)
                 self.norm3 = nn.LayerNorm(self.dim_output)
             self.v_up = nn.Linear(self.dim_mem, self.dim_output)
@@ -62,12 +66,14 @@ class Memory(nn.Module):
             else:
                 self.out_proj = nn.Linear(n_head * self.dim_mem, self.dim_output)
             if not self.no_norm:
-                # self.norm1 = nn.LayerNorm(512)
+                #self.norm1 = nn.LayerNorm(512)
                 self.norm2 = nn.LayerNorm(self.dim_output)
                 self.norm3 = nn.LayerNorm(self.dim_output)
 
         self.q_proj_weight = nn.Linear(self.dim_input, n_head * self.dim_query)
         self.v_proj_weight = nn.Linear(dim, self.dim_mem)
+        if self.use_kd:
+            self.knowledge_proj_weight = nn.Linear(self.dim_input, self.dim_mem)
 
         # self.dropout = nn.Dropout(0.5)
 
@@ -84,7 +90,7 @@ class Memory(nn.Module):
         B, S, C = query.size()
         value = value.view(B * S, self.dim_input)  # BS,512
         f_target_recon, hypothesis_output = None, None
-        recon_loss, contrastive_loss, hypo_contrastive_loss, match_global_loss = torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda()
+        recon_loss, contrastive_loss, hypo_contrastive_loss, match_global_loss, kd_loss = torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda(), torch.zeros(1).cuda()
         key_normalized = F.normalize(self.key.view(self.n_head, self.n_slot, -1),
                                      dim=2)  # n_head, n_slot, head_dim
         query_proj = self.q_proj_weight(query.view(B * S, self.dim_input))  # B*S, n_head * head_dim
@@ -99,7 +105,11 @@ class Memory(nn.Module):
         # print(torch.max(key_address, dim=1))  # BS, predicts_times, n_slot
 
         # (BS, n_head, n_slot) * (n_slot , 512) --> BS, n_head, 512
-        m_head_out = torch.matmul(key_address, self.value.detach())
+        if not self.value_adaptive:
+            m_head_out = torch.matmul(key_address, self.value.detach())
+        else:
+            m_head_out = torch.matmul(key_address, self.value)
+
         if self.contrastive_hypo:
             m_head_out_normed = F.normalize(m_head_out, dim=2)
             out_sim = torch.einsum('bcd, bed->bce', m_head_out_normed, m_head_out_normed)  # BS, n_head, n_head
@@ -111,7 +121,6 @@ class Memory(nn.Module):
         #  out_cosine_sim = torch.einsum('bcd, bed->bce', m_head_out_normed, m_head_out_normed) # BS, n_head, n_head
         #  sim_with_target = torch.einsum('bhd, bd->bh', m_head_out_normed, F.normalize(value.view(B * S, -1), dim=-1))
         #  torch.max(sim_with_target, dim=-1)
-
         if self.choose_by_global:
             m_head_out = m_head_out.view(B * S, self.n_head, self.dim_mem)  # BS, n_head, head_dim
             f_global_proj = self.context_proj_weight(f_global.detach()).view(B * S, -1)
@@ -153,7 +162,11 @@ class Memory(nn.Module):
 
         f_predict = attention_output.view(B, S, self.dim_output)
         # f_predict = self.dropout(self.norm1(query + attention_output.view(B, S, -1)))
-
+        if self.use_kd:
+            query_kd_proj = self.knowledge_proj_weight(query.view(B * S, self.dim_input))  # B*S, n_head * head_dim
+            f_knowledge = torch.mean(torch.cat((m_head_out, query.view(B*S, 1, self.dim_input)), dim=1), dim=1)
+            # f_knowledge = torch.mean(m_head_out, dim=1)
+            kd_loss = torch.abs(1.0 - F.cosine_similarity(query_kd_proj, f_knowledge.detach(), 1)).sum() / (B * S)
         # Update
         if not inference:
             value_proj = self.v_proj_weight(value.detach())
@@ -179,4 +192,4 @@ class Memory(nn.Module):
             f_target_recon = attention_recon.view(B, S, self.dim_output)
             # f_target_recon = self.dropout(self.norm1(query + attention_recon.view(B, S, -1)))
 
-        return f_predict, f_target_recon, recon_loss, contrastive_loss, hypothesis_output, hypo_contrastive_loss, match_global_loss
+        return f_predict, f_target_recon, recon_loss, contrastive_loss, hypothesis_output, hypo_contrastive_loss, match_global_loss, kd_loss

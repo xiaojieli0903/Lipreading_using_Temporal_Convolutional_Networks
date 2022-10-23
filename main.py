@@ -230,7 +230,7 @@ def load_args(default_config=None):
     # loss average dim
     parser.add_argument('--loss-average-dim',
                         type=int,
-                        default=-0,
+                        default=0,
                         help='the average dim of the L2 loss.')
     # detach predict
     parser.add_argument('--detach-target',
@@ -276,12 +276,17 @@ def load_args(default_config=None):
     parser.add_argument('--hypo-contrastive-loss-weight',
                         type=float,
                         default=1,
-                        help='the weight of the hypo_contrastive loss weight.')
+                        help='the weight of the hypo_contrastive loss.')
     # match global loss weight
     parser.add_argument('--match-global-loss-weight',
                         type=float,
                         default=1,
-                        help='the weight of the match global loss weight.')
+                        help='the weight of the match global loss.')
+    # kd loss weight
+    parser.add_argument('--kd-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the kd loss.')
     args = parser.parse_args()
     return args
 
@@ -331,15 +336,12 @@ def calculate_loss(pred, target, loss_type='l2', average_dim=-1):
     """
     assert pred.size() == target.size() and target.numel() > 0
     if loss_type == 'l2':
-        if average_dim == -1:
-            loss = torch.sum(torch.pow(pred - target, 2))
-        else:
-            loss = torch.sum(torch.pow(pred - target,
-                                       2)) / target.shape[average_dim]
+        loss = torch.sum(torch.pow(pred - target, 2))
     elif loss_type == 'cosine':
         loss = torch.abs(1 - F.cosine_similarity(pred, target, 1)).sum()
     else:
         raise RuntimeError(f'Loss type {loss_type} is not supported.')
+
     if average_dim == -1:
         loss /= target.numel()
     else:
@@ -362,7 +364,7 @@ def evaluate(model, dset_loader, criterion):
                 input, lengths, labels = data
                 boundaries = None
             if model.predict_future >= 0:
-                logits, feature_predict, feature_target, _, _, _, _, _, _ = model(
+                logits, feature_predict, feature_target, _, _, _, _, _, _, _ = model(
                     input.unsqueeze(1).cuda(),
                     lengths=lengths,
                     boundaries=boundaries)
@@ -431,7 +433,7 @@ def train(model,
         loss = torch.zeros(1).float().cuda()
         predict_times = 0
         if model.predict_future >= 0:
-            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg, hypo_contrastive_loss, match_global_loss = model(
+            logits, feature_predict, feature_target, target_recon_loss, contrastive_loss, features_pos, features_neg, hypo_contrastive_loss, match_global_loss, kd_loss = model(
                 input.unsqueeze(1).cuda(),
                 lengths=lengths,
                 boundaries=boundaries,
@@ -492,12 +494,16 @@ def train(model,
                 loss_weight['loss_contrastive'] = args.contrastive_loss_weight
             if args.contrastive_hypo:
                 loss += args.hypo_contrastive_loss_weight * hypo_contrastive_loss
-                loss_dict['loss_hypo_contrastive_loss'] = hypo_contrastive_loss
-                loss_weight['loss_hypo_contrastive_loss'] = args.hypo_contrastive_loss_weight
+                loss_dict['loss_hypo_contrastive'] = hypo_contrastive_loss
+                loss_weight['loss_hypo_contrastive'] = args.hypo_contrastive_loss_weight
             if args.match_global:
                 loss += args.match_global_loss_weight * match_global_loss
-                loss_dict['loss_match_global_loss'] = match_global_loss
-                loss_weight['loss_match_global_loss'] = args.match_global_loss_weight
+                loss_dict['loss_match_global'] = match_global_loss
+                loss_weight['loss_match_global'] = args.match_global_loss_weight
+            if args.use_kd:
+                loss += args.kd_loss_weight * kd_loss
+                loss_dict['loss_kd'] = kd_loss
+                loss_weight['loss_kd'] = args.kd_loss_weight
         else:
             logits = model(input.unsqueeze(1).cuda(),
                            lengths=lengths,
@@ -577,6 +583,8 @@ def get_model_from_json():
             'contrastive_hypo': args_loaded.get('contrastive_hypo', False),
             'dim_query': args_loaded.get('dim_query', 64),
             'match_global': args_loaded.get('match_global', False),
+            'use_kd': args_loaded.get('use_kd', False),
+            'value_adaptive': args_loaded.get('value_adaptive', False),
         })
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_global = args_loaded.get('choose_by_global', False)
@@ -586,6 +594,8 @@ def get_model_from_json():
     args.context_type = args_loaded.get('context_type', 'exclude')
     args.contrastive_hypo = args_loaded.get('contrastive_hypo', False)
     args.match_global = args_loaded.get('match_global', False)
+    args.use_kd = args_loaded.get('use_kd', False)
+    args.value_adaptive = args_loaded.get('value_adaptive', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
