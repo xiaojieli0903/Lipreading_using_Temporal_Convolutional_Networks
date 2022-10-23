@@ -164,14 +164,14 @@ def load_args(default_config=None):
         default=False,
         action='store_true',
         help=
-        'If True, allows to init from model with mismatching weight tensors. Useful to init from model with different '
+        'If True, allows to init from model with mismatching weight tensors. '
+        'Useful to init from model with different '
         'number of classes')
     # -- feature extractor
     parser.add_argument('--extract-feats',
                         default=False,
                         action='store_true',
                         help='Feature extractor')
-    # -- feature extract layer
     parser.add_argument('--output-layer',
                         default='backbone',
                         help='Feature extractor layer')
@@ -180,7 +180,8 @@ def load_args(default_config=None):
         '--mouth-patch-path',
         type=str,
         default=None,
-        help='Path to the mouth ROIs, assuming the file is saved as numpy.array'
+        help='Path to the mouth ROIs, assuming the file is saved as '
+             'numpy.array'
     )
     parser.add_argument('--mouth-embedding-out-path',
                         type=str,
@@ -216,77 +217,62 @@ def load_args(default_config=None):
                         type=str,
                         default='',
                         help='the name of the exp.')
-    # predict loss weight
-    parser.add_argument('--predict-loss-weight',
-                        type=float,
-                        default=1.0,
-                        help='the weight of the predict loss.')
-
-    # cls loss weight
+    # loss weight
     parser.add_argument('--cls-loss-weight',
                         type=float,
                         default=1.0,
                         help='the weight of the cls loss.')
-    # loss average dim
+    parser.add_argument('--predict-loss-weight',
+                        type=float,
+                        default=1.0,
+                        help='the weight of the predict loss.')
     parser.add_argument('--loss-average-dim',
                         type=int,
                         default=0,
-                        help='the average dim of the L2 loss.')
-    # detach predict
+                        help='the average dim of the loss.')
     parser.add_argument('--detach-target',
                         default=True,
                         action='store_true',
                         help='detach the target when calculate loss.')
-    # predict loss type
     parser.add_argument('--predict-loss-type',
                         type=str,
                         default='cosine',
                         help='the type of the predict loss.')
-    # add memory loss
-    parser.add_argument('--add-memory-loss',
-                        default=True,
-                        action='store_true',
-                        help='whether add the memory loss from mvm.')
-    # memory target reconstruction loss weight
-    parser.add_argument('--recon-loss-weight',
+    # mvm loss weight
+    parser.add_argument('--mvm-recon-loss-weight',
                         type=float,
                         default=1.0,
-                        help='the weight of the recon loss.')
-    # memory slots difference loss weight
-    parser.add_argument('--contrastive-loss-weight',
+                        help='the weight of the mvm recon loss.')
+    parser.add_argument('--mvm-contrastive-loss-weight',
                         type=float,
                         default=1,
-                        help='the weight of the contrastive loss.')
-    # use D
+                        help='the weight of the mvm contrastive loss.')
+    parser.add_argument(
+        '--mvm-hypo-contrastive-loss-weight',
+        type=float,
+        default=1,
+        help='the weight of the mvm hypotheses contrastive loss.')
+    parser.add_argument('--mvm-match-global-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the match global loss.')
+    parser.add_argument('--mvm-kd-loss-weight',
+                        type=float,
+                        default=1,
+                        help='the weight of the kd loss.')
+    # GAN loss settings
     parser.add_argument('--use-gan',
                         default=False,
                         action='store_true',
                         help='whether use D.')
-    # D loss weight
     parser.add_argument('--gan-loss-weight',
                         type=float,
                         default=1,
                         help='the weight of the D loss.')
-    # gan start iter
     parser.add_argument('--gan-start-iter',
                         type=int,
                         default=20000,
                         help='the start iter of the gan loss.')
-    # hypo-contrastive loss weight
-    parser.add_argument('--hypo-contrastive-loss-weight',
-                        type=float,
-                        default=1,
-                        help='the weight of the hypo_contrastive loss.')
-    # match global loss weight
-    parser.add_argument('--match-global-loss-weight',
-                        type=float,
-                        default=1,
-                        help='the weight of the match global loss.')
-    # kd loss weight
-    parser.add_argument('--kd-loss-weight',
-                        type=float,
-                        default=1,
-                        help='the weight of the kd loss.')
     args = parser.parse_args()
     return args
 
@@ -381,7 +367,8 @@ def evaluate(model, dset_loader, criterion):
     logits = preds = input = labels = None
 
     print(
-        f"{len(dset_loader.dataset)} in total\tCR: {running_corrects / len(dset_loader.dataset)}"
+        f"{len(dset_loader.dataset)} in total\tCR: "
+        f"{running_corrects / len(dset_loader.dataset)}"
     )
     return running_corrects / len(dset_loader.dataset), running_loss / len(
         dset_loader.dataset)
@@ -425,7 +412,6 @@ def train(model,
         # measure data loading time
         data_time.update(time.time() - end)
 
-        # --
         input, labels_a, labels_b, lam = mixup_data(input, labels, args.alpha)
         labels_a, labels_b = labels_a.cuda(), labels_b.cuda()
 
@@ -438,8 +424,10 @@ def train(model,
                 lengths=lengths,
                 boundaries=boundaries,
                 targets=labels_a)
+
             if feature_predict is not None:
                 predict_times = feature_predict.shape[0] // logits.shape[0]
+
             if args.use_gan:
                 logits_G = model_D(features_neg)
                 labels_G = torch.ones(features_pos.shape[0]).cuda().long()
@@ -478,32 +466,34 @@ def train(model,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
             else:
-                loss_predict = calculate_loss(feature_predict, feature_target,
+                loss_predict = calculate_loss(feature_predict,
+                                              feature_target,
                                               args.predict_loss_type,
                                               args.loss_average_dim)
+
             predict_loss_name = 'loss_' + args.predict_loss_type
             loss_dict[predict_loss_name] = loss_predict
             loss_weight[predict_loss_name] = args.predict_loss_weight
             loss += args.predict_loss_weight * loss_predict
-            if args.add_memory_loss and target_recon_loss is not None:
-                loss += args.recon_loss_weight * target_recon_loss
-                loss += args.contrastive_loss_weight * contrastive_loss
+            if target_recon_loss is not None:
+                loss += args.mvm_recon_loss_weight * target_recon_loss
                 loss_dict['loss_target_recon'] = target_recon_loss
-                loss_weight['loss_target_recon'] = args.recon_loss_weight
+                loss_weight['loss_target_recon'] = args.mvm_recon_loss_weight
+                loss += args.mvm_contrastive_loss_weight * contrastive_loss
                 loss_dict['loss_contrastive'] = contrastive_loss
-                loss_weight['loss_contrastive'] = args.contrastive_loss_weight
+                loss_weight['loss_contrastive'] = args.mvm_contrastive_loss_weight
             if args.contrastive_hypo:
-                loss += args.hypo_contrastive_loss_weight * hypo_contrastive_loss
+                loss += args.mvm_hypo_contrastive_loss_weight * hypo_contrastive_loss
                 loss_dict['loss_hypo_contrastive'] = hypo_contrastive_loss
-                loss_weight['loss_hypo_contrastive'] = args.hypo_contrastive_loss_weight
+                loss_weight['loss_hypo_contrastive'] = args.mvm_hypo_contrastive_loss_weight
             if args.match_global:
-                loss += args.match_global_loss_weight * match_global_loss
+                loss += args.mvm_match_global_loss_weight * match_global_loss
                 loss_dict['loss_match_global'] = match_global_loss
-                loss_weight['loss_match_global'] = args.match_global_loss_weight
+                loss_weight['loss_match_global'] = args.mvm_match_global_loss_weight
             if args.use_kd:
-                loss += args.kd_loss_weight * kd_loss
+                loss += args.mvm_kd_loss_weight * kd_loss
                 loss_dict['loss_kd'] = kd_loss
-                loss_weight['loss_kd'] = args.kd_loss_weight
+                loss_weight['loss_kd'] = args.mvm_kd_loss_weight
         else:
             logits = model(input.unsqueeze(1).cuda(),
                            lengths=lengths,
@@ -518,7 +508,8 @@ def train(model,
         loss.backward()
         # for key, param in model.named_parameters():
         #     if param.grad is not None:
-        #         print(key, param.requires_grad, param.shape, torch.sum(param.grad))
+        #         print(key, param.requires_grad, param.shape,
+        #               torch.sum(param.grad))
         #     else:
         #         print(key, param.requires_grad, param.shape, param.grad)
         optimizer.step()
@@ -549,8 +540,8 @@ def train(model,
             update_logger_batch(
                 args, logger, dset_loader, batch_idx, running_loss, loss_dict,
                 loss_weight, running_corrects, running_all, batch_time,
-                data_time, lr,
-                torch.cuda.max_memory_allocated() / 1024 / 1024, accuracy, predict_times)
+                data_time, lr, torch.cuda.max_memory_allocated() / 1024 / 1024,
+                accuracy, predict_times)
 
     return model
 
@@ -573,29 +564,28 @@ def get_model_from_json():
     args.predict_type = args_loaded.get("predict_type", 1)
     args.block_size = args_loaded.get("block_size", 5)
     args.memory_type = args_loaded.get('memory_type', 'memdpc')
+
     args.memory_options = args_loaded.get(
         "memory_options", {
             'radius': args_loaded.get('radius', 16),
             'slot': args_loaded.get('slot', 112),
             'head': args_loaded.get('head', 8),
             'no_norm': args_loaded.get('no_norm', False),
+            'choose_by_global': args_loaded.get('choose_by_global', False),
             'use_hypotheses': args_loaded.get('use_hypotheses', False),
+            'choose_type': args_loaded.get('choose_type', 'cosine'),
             'contrastive_hypo': args_loaded.get('contrastive_hypo', False),
             'dim_query': args_loaded.get('dim_query', 64),
             'match_global': args_loaded.get('match_global', False),
             'use_kd': args_loaded.get('use_kd', False),
             'value_adaptive': args_loaded.get('value_adaptive', False),
         })
+
     args.skip_number = args_loaded.get('skip_number', 1)
     args.choose_by_global = args_loaded.get('choose_by_global', False)
     args.predict_all = args_loaded.get('predict_all', False)
     args.detach_all = args_loaded.get('detach_all', False)
-    args.choose_type = args_loaded.get('choose_type', 'cosine')
     args.context_type = args_loaded.get('context_type', 'exclude')
-    args.contrastive_hypo = args_loaded.get('contrastive_hypo', False)
-    args.match_global = args_loaded.get('match_global', False)
-    args.use_kd = args_loaded.get('use_kd', False)
-    args.value_adaptive = args_loaded.get('value_adaptive', False)
 
     if args_loaded.get('tcn_num_layers', ''):
         tcn_options = {
@@ -646,7 +636,6 @@ def get_model_from_json():
         choose_by_global=args.choose_by_global,
         predict_all=args.predict_all,
         detach_all=args.detach_all,
-        choose_type=args.choose_type,
         context_type=args.context_type
     ).cuda()
     calculateNorm2(model)
@@ -683,16 +672,19 @@ def main():
         logger.info(model_D)
 
     if args.model_path:
-        assert args.model_path.endswith('.pth') and os.path.isfile(args.model_path), \
+        assert args.model_path.endswith('.pth') and \
+               os.path.isfile(args.model_path), \
             f"'.pth' model path does not exist. Path input: {args.model_path}"
         # resume from checkpoint
         if args.init_epoch > 0:
             model, optimizer, epoch_idx, ckpt_dict = load_model(
-                args.model_path, model, optimizer, allow_size_mismatch=args.allow_size_mismatch)
+                args.model_path, model, optimizer,
+                allow_size_mismatch=args.allow_size_mismatch)
             args.init_epoch = epoch_idx
             ckpt_saver.set_best_from_ckpt(ckpt_dict)
             logger.info(
-                f'Model and states have been successfully loaded from {args.model_path}'
+                f'Model and states have been successfully loaded '
+                f'from {args.model_path}'
             )
             if args.use_gan:
                 model_D, optimizer_D = load_model(args.model_path,

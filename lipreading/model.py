@@ -196,7 +196,6 @@ class Lipreading(nn.Module):
                  choose_by_global=False,
                  predict_all=False,
                  detach_all=False,
-                 choose_type='cosine',
                  context_type='exclude'
                  ):
         super(Lipreading, self).__init__()
@@ -221,7 +220,6 @@ class Lipreading(nn.Module):
         self.choose_by_global = choose_by_global
         self.predict_all = predict_all
         self.detach_all = detach_all
-        self.choose_type = choose_type
         assert context_type in ['exclude', 'all']
         self.context_type = context_type
 
@@ -309,9 +307,9 @@ class Lipreading(nn.Module):
                         n_slot=memory_options['slot'],
                         n_head=memory_options['head'],
                         no_norm=memory_options['no_norm'],
-                        choose_by_global=self.choose_by_global,
+                        choose_by_global=memory_options['choose_by_global'],
                         use_hypotheses=memory_options['use_hypotheses'],
-                        choose_type=self.choose_type,
+                        choose_type=memory_options['choose_type'],
                         contrastive_hypo=memory_options['contrastive_hypo'],
                         dim_query=memory_options['dim_query'],
                         match_global=memory_options['match_global'],
