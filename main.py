@@ -137,6 +137,10 @@ def load_args(default_config=None):
                         default=3e-4,
                         type=float,
                         help='initial learning rate')
+    parser.add_argument('--warmup',
+                        default=0,
+                        type=int,
+                        help='the warm up iters')
     parser.add_argument('--init-epoch',
                         default=0,
                         type=int,
@@ -353,7 +357,8 @@ def train(model,
           optimizer,
           logger,
           model_D=None,
-          optimizer_D=None):
+          optimizer_D=None,
+          scheduler=None):
     data_time = AverageMeter()
     batch_time = AverageMeter()
 
@@ -380,13 +385,14 @@ def train(model,
             input, lengths, labels = data
             boundaries = None
 
+        scheduler.adjust_lr(optimizer, epoch, batch_idx, len(dset_loader))
         lr = showLR(optimizer)
+
         # measure data loading time
         data_time.update(time.time() - end)
 
         input, labels_a, labels_b, lam = mixup_data(input, labels, args.alpha)
         labels_a, labels_b = labels_a.cuda(), labels_b.cuda()
-
         optimizer.zero_grad()
         loss = torch.zeros(1).float().cuda()
         predict_times = 0
@@ -633,7 +639,7 @@ def main():
     # -- get optimizer
     optimizer = get_optimizer(args, optim_policies=model.parameters())
     # -- get learning rate scheduler
-    scheduler = CosineScheduler(args.lr, args.epochs)
+    scheduler = CosineScheduler(args.lr, args.epochs, args.warmup)
     # -- get D model
     model_D = optimizer_D = None
     if args.use_gan:
@@ -715,7 +721,7 @@ def main():
     epoch = args.init_epoch
     while epoch < args.epochs:
         model = train(model, dset_loaders['train'], criterion, epoch,
-                      optimizer, logger, model_D, optimizer_D)
+                      optimizer, logger, model_D, optimizer_D, scheduler=scheduler)
         acc_avg_val, loss_avg_val = evaluate(model, dset_loaders['val'],
                                              criterion)
         logger.info(

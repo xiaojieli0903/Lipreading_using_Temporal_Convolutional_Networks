@@ -10,13 +10,18 @@ def change_lr_on_optimizer(optimizer, lr):
 
 
 class CosineScheduler:
-    def __init__(self, lr_ori, epochs):
+    def __init__(self, lr_ori, epochs, warmup=0):
         self.lr_ori = lr_ori
         self.epochs = epochs
+        self.warmup = warmup
 
-    def adjust_lr(self, optimizer, epoch):
-        reduction_ratio = 0.5 * (1 + math.cos(math.pi * epoch / self.epochs))
-        change_lr_on_optimizer(optimizer, self.lr_ori * reduction_ratio)
+    def adjust_lr(self, optimizer, epoch, batch_idx=0, dataset_num=0):
+        if self.warmup > 0 and (batch_idx + epoch * dataset_num) < self.warmup:
+            warmup_lr = self.lr_ori / self.warmup * (batch_idx + epoch * dataset_num)
+            change_lr_on_optimizer(optimizer, warmup_lr)
+        else:
+            reduction_ratio = 0.5 * (1 + math.cos(math.pi * epoch / self.epochs))
+            change_lr_on_optimizer(optimizer, self.lr_ori * reduction_ratio)
 
 
 def get_optimizer(args, optim_policies):

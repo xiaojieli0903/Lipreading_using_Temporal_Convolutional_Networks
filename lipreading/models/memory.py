@@ -53,7 +53,7 @@ class Memory(nn.Module):
 
         if self.diff_key_value:
             if self.choose_by_global:
-                self.global_proj_weight = nn.Linear(self.dim_input,
+                self.context_proj_weight = nn.Linear(self.dim_input,
                                                     self.dim_mem)
             else:
                 self.out_proj = nn.Linear(n_head * self.dim_mem,
@@ -65,7 +65,7 @@ class Memory(nn.Module):
             self.v_up = nn.Linear(self.dim_mem, self.dim_output)
         else:
             if self.choose_by_global:
-                self.global_proj_weight = nn.Linear(self.dim_input,
+                self.context_proj_weight = nn.Linear(self.dim_input,
                                                     self.dim_mem)
                 if self.choose_type == 'attention':
                     # global project to match local
@@ -139,7 +139,7 @@ class Memory(nn.Module):
             # torch.max(sim_with_target, dim=-1)
         if self.choose_by_global:
             # BS, n_head, dim_mem
-            f_global_proj = self.global_proj_weight(f_global).view(
+            f_global_proj = self.context_proj_weight(f_global).view(
                 B * S, self.dim_mem)
             f_global_norm = F.normalize(f_global_proj, dim=-1)
             if self.choose_type == 'attention':
@@ -215,9 +215,10 @@ class Memory(nn.Module):
         # print(torch.matmul(value_norm,
         #                    value_norm.transpose(0, 1))
         #       - torch.eye(self.n_slot).cuda())
-        recon_loss = torch.abs(1.0 - F.cosine_similarity(
-            attention_recon, value, 1)).sum() / (B * S)
-
+        recon_loss = calculate_loss(attention_recon,
+                                    value,
+                                    loss_type=self.loss_type,
+                                    average_dim=0)
         if self.diff_key_value:
             attention_recon = self.v_up(attention_recon)
 
