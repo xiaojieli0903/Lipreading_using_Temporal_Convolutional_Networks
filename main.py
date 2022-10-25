@@ -550,8 +550,8 @@ def get_model_from_json():
     args.memory_options = args_loaded.get(
         "memory_options", {
             'radius': args_loaded.get('radius', 16),
-            'n_slot': args_loaded.get('slot', 112),
-            'n_head': args_loaded.get('head', 8),
+            'n_slot': args_loaded.get('n_slot', 112),
+            'n_head': args_loaded.get('n_head', 8),
             'no_norm': args_loaded.get('no_norm', False),
             'choose_by_global': args_loaded.get('choose_by_global', False),
             'use_hypotheses': args_loaded.get('use_hypotheses', False),

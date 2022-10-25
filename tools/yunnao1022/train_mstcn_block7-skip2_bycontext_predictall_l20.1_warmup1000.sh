@@ -6,6 +6,6 @@ CUDA_VISIBLE_DEVICES=3 python main.py --modality video \
                                       --annonation-direc $ANNONATION_DIRECTORY \
                                       --data-dir $MOUTH_ROIS_DIRECTORY \
 				      --alpha 0 --epochs 20 \
-				      --exp-name _nomixup_20epochs \
+				      --exp-name _nomixup_20epochs_l2_warm5000 \
 				      --predict-loss-type "l2" \
-				      --warmup 1000
+				      --warmup 5000
