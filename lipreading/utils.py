@@ -152,7 +152,11 @@ class CheckpointSaver:
         self.best_for_stage = ckpt_dict.get('best_prec_per_stage', None)
 
 
-def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
+def load_model(load_path,
+               model,
+               optimizer=None,
+               allow_size_mismatch=False,
+               discriminator_flag=False):
     """
     Load model from file
     If optimizer is passed, then the loaded dictionary is expected to contain also the states of the optimizer.
@@ -165,14 +169,34 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     ), "Error when loading the model, provided path not found: {}".format(
         load_path)
     checkpoint = torch.load(load_path)
-    loaded_state_dict = checkpoint['model_state_dict']
+    if not discriminator_flag:
+        loaded_state_dict = checkpoint['model_state_dict']
+        optimizer_state_dict = checkpoint['optimizer_state_dict']
+
+    else:
+        loaded_state_dict = checkpoint['model_D_state_dict']
+        optimizer_state_dict = checkpoint['optimizer_D_state_dict']
 
     if allow_size_mismatch:
         loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
         model_state_dict = model.state_dict()
         model_sizes = {k: v.shape for k, v in model_state_dict.items()}
+        
+        ckpt_keys = set(loaded_state_dict.keys())
+        own_keys = set(model_state_dict.keys())
+        missing_keys = own_keys - ckpt_keys
+        notfound_keys = ckpt_keys - own_keys
+        for key in missing_keys:
+            print(f'**missing key while load model: {key}')
+            
+        for key in notfound_keys:
+            print(f'**not founded key in current model: {key}')
+        
         mismatched_params = []
         for k in loaded_sizes:
+            if k in notfound_keys:
+                mismatched_params.append(k)
+                continue
             if loaded_sizes[k] != model_sizes[k]:
                 mismatched_params.append(k)
         for k in mismatched_params:
@@ -181,16 +205,22 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     # -- copy loaded state into current model and, optionally, optimizer
     model.load_state_dict(loaded_state_dict, strict=not allow_size_mismatch)
     if optimizer is not None:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        return model, optimizer, checkpoint['epoch_idx'], checkpoint
+        if not discriminator_flag:
+            optimizer.load_state_dict(optimizer_state_dict)
+            return model, optimizer, checkpoint['epoch_idx'], checkpoint
+        else:
+            optimizer.load_state_dict(optimizer_state_dict)
+            return model, optimizer
     return model
 
 
 # -- logging utils
 def get_logger(args, save_path):
-    log_path = '{}/{}_{}_{}classes_log.txt'.format(save_path,
-                                                   args.training_mode, args.lr,
-                                                   args.num_classes)
+    log_path = '{}/{}_{}_{}classes_{}_log.txt'.format(save_path,
+                                                      args.training_mode,
+                                                      args.lr,
+                                                      args.num_classes,
+                                                      args.time_info)
     logger = logging.getLogger("mylog")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter(
@@ -207,8 +237,9 @@ def get_logger(args, save_path):
 
 
 def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
-                        loss_dict, running_corrects, running_all, batch_time,
-                        data_time, lr, mem, global_iter, dataset_num):
+                        loss_dict, loss_weight, running_corrects, running_all,
+                        batch_time, data_time, lr, mem, global_iter, dataset_num,
+                        mem, accuracy, predict_times):
     perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
     all_iters = args.epochs * len(dset_loader)
     eta = batch_time.avg * (all_iters - global_iter) / 3600
@@ -221,10 +252,17 @@ def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss,
         f"lr:{lr:.6f} | "
         f"Mem:{mem:.3f}M | "
         f"Data time:{data_time.val:1.3f} ({data_time.avg:1.3f}) | "
-        f"Instances per second: {args.batch_size*args.world_size/batch_time.avg:.2f} | ETA: {eta:.2f}h"
-    )
+        f"Instances per second: {args.batch_size*args.world_size/batch_time.avg:.2f} | ETA: {eta:.2f}h |"
+        f"Predict_instances: {predict_times:5.0f}")
     for key in loss_dict:
-        logger.info(f"-----{key}: {loss_dict[key].item():.4f}")
+        if key in accuracy.keys():
+            logger.info(
+                f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}, acc: {accuracy[key] * 100:2.4f}%"
+            )
+        else:
+            logger.info(
+                f"-----{key}: {loss_weight[key]:.4f} * {loss_dict[key].item():.4f}"
+            )
 
 
 def get_save_folder(args):
@@ -232,10 +270,11 @@ def get_save_folder(args):
     save_path = '{}/{}/{}'.format(
         args.logging_dir, args.training_mode,
         args.config_path.split('/')[-1].replace('.json', '') + args.exp_name)
-    save_path += '/' + datetime.datetime.now().isoformat().split('.')[0]
-    if not os.path.isdir(save_path):
+    time_info = datetime.datetime.now().isoformat().split('.')[0].replace(
+        ':', '_')
+    if not os.path.exists(save_path):
         os.makedirs(save_path)
-    return save_path
+    return save_path, time_info
 
 
 def sync_random_seed(seed=None, device='cuda'):

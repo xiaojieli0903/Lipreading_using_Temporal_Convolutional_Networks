@@ -6,8 +6,17 @@ __pycache__/
 *.pyc
 *.tar
 *.pth
-datasets/outputs
+datasets/
+datasets/*
 .DS_Store
 */.ipynb*
 */*/.ipynb*
 .ipynb*/*
+<<<<<<< HEAD
+train_logs/
+=======
+datasets/
+datasets/*
+train_logs/
+train_logs
+>>>>>>> 09ec799d1b3b098b81331865cc42c9bcfdae0f87
